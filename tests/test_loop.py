@@ -1,14 +1,14 @@
 import gc
-import time
-import warnings
+import os
+import signal
 from unittest.mock import DEFAULT, MagicMock, Mock, call
 
 import pytest
 
 import aio
+from aio.components.scheduler import Scheduler
 from aio.interfaces import Clock, Handle
 from aio.loop import BaseEventLoop, BaseLoopRunner
-from aio.scheduler import Scheduler
 
 
 def process_handle_exception(exc, logger_, /, **context) -> None:
@@ -44,6 +44,7 @@ class TestLoopStepping:
     def make_loop(self, selector, clock):
         return lambda scheduler: BaseEventLoop(
             selector,
+            networking_factory=Mock(side_effect=Exception('Not exists.')),
             clock=clock,
             scheduler=scheduler,
             exception_handler=process_handle_exception,
@@ -322,8 +323,10 @@ class TestLoopStepping:
 class TestLoopRunner:
     @pytest.fixture
     def runner(self, clock, selector):
-        loop = BaseEventLoop(clock=clock, selector=selector)
-        runner = BaseLoopRunner(loop)
+        loop = BaseEventLoop(
+            selector, Mock(side_effect=Exception('Not exists.')), clock=clock
+        )
+        runner = BaseLoopRunner(loop, selector)
         return runner
 
     @pytest.fixture
@@ -361,6 +364,25 @@ class TestLoopRunner:
 
         runner.run_coroutine(root())
         assert should_be_called.mock_calls == [call()]
+
+    def test_changes_sigint_to_cancelled(self, runner):
+        should_be_called = Mock()
+        should_not_be_called = Mock()
+
+        async def root():
+            should_be_called()
+            # Probably wont work in a lot of cases and may cause wired behaviour
+            os.kill(os.getpid(), signal.SIGINT)
+            # Suspend coroutine to initialize further processing
+            await aio.sleep(10)
+
+            should_not_be_called()
+
+        with pytest.raises(aio.Cancelled):
+            runner.run_coroutine(root())
+
+        assert should_be_called.mock_calls == [call()]
+        assert should_not_be_called.mock_calls == []
 
     def test_should_warn_if_async_gen_being_gc_while_not_finished(self, runner):
         should_be_called_in_root = Mock()

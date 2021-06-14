@@ -3,15 +3,13 @@ from __future__ import annotations
 import inspect
 import warnings
 from enum import IntEnum
-from types import TracebackType
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Awaitable,
     Generic,
     Mapping,
     Optional,
     Protocol,
-    Type,
     TypeVar,
     Union,
 )
@@ -19,6 +17,9 @@ from typing import (
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
 from aio.interfaces import EventLoop
 from aio.loop import _get_loop_inner
+
+if TYPE_CHECKING:
+    from aio.types import Coroutine
 
 T = TypeVar('T')
 
@@ -132,7 +133,7 @@ class Future(Generic[T]):
             return
 
         if self.is_finished():
-            self._schedule_cb(cb)
+            self._schedule_callback(cb)
             return
 
         self._result_callbacks.add(cb)
@@ -153,13 +154,13 @@ class Future(Generic[T]):
     def is_cancelled(self) -> bool:
         return self.is_finished() and isinstance(self._exc, Cancelled)
 
-    def _call_cbs(self) -> None:
+    def _call_callbacks(self) -> None:
         assert self.is_finished(), 'Future must finish before calling callbacks'
 
         for cb in self._result_callbacks:
-            self._schedule_cb(cb)
+            self._schedule_callback(cb)
 
-    def _schedule_cb(self, cb: FutureResultCallback) -> None:
+    def _schedule_callback(self, cb: FutureResultCallback) -> None:
         assert self.is_finished(), 'Future must finish before scheduling callbacks'
 
         self._loop.call_soon(cb, self, context=self._context)
@@ -176,7 +177,7 @@ class Future(Generic[T]):
 
         self._value = val
         self._exc = exc
-        self._call_cbs()
+        self._call_callbacks()
 
     def _cancel(self, msg: Optional[str] = None) -> None:
         self._set_result(exc=Cancelled(msg))
@@ -198,7 +199,7 @@ class Future(Generic[T]):
 
     def __repr__(self) -> str:
         label = self._label if self._label else ''
-        return f'<Future label="{label}" state={self._state.name} at {hex(id(self))}>'
+        return f'<Future label={label} state={self._state.name} at {hex(id(self))}>'
 
     def __eq__(self, other: Any) -> Union[NotImplemented, bool]:
         if not isinstance(other, type(self)):
@@ -215,24 +216,6 @@ class Future(Generic[T]):
                 ),
                 stacklevel=2,
             )
-
-
-class Coroutine(Awaitable[T], Protocol[T]):
-    """Loop bound coroutine type"""
-
-    def send(self, value: None) -> Future[Any]:
-        raise NotImplementedError
-
-    def throw(
-        self,
-        typ: Type[BaseException],
-        val: Union[BaseException, object, None] = None,
-        tb: Optional[TracebackType] = None,
-    ) -> Future[Any]:
-        raise NotImplementedError
-
-    def close(self) -> None:
-        raise NotImplementedError
 
 
 class Task(Future[T]):
@@ -260,10 +243,11 @@ class Task(Future[T]):
 
         self._state = Future.State.finishing
 
-        if self._waiting_on is not None:
+        if self._waiting_on:
             # Recursively cancel all inner tasks
             self._waiting_on._cancel(msg)
         else:
+            # TODO Check coroutine finished
             super()._cancel(msg)
 
     def _schedule_execution(self, _: Optional[Future[Any]] = None) -> None:
@@ -275,8 +259,6 @@ class Task(Future[T]):
         try:
             future = self._coroutine.send(None)
         except StopIteration as exc:
-            # `exc.value` must be instance of `T`,
-            # but there is no way we could check that
             val: T = exc.value
             self._set_result(val=val)
             return
@@ -302,7 +284,7 @@ class Task(Future[T]):
             raise RuntimeError(
                 f'During processing task "{self!r}" another '
                 f'task has been "{future!r}" received, which '
-                f"does not belong to the same loop"
+                f'does not belong to the same loop'
             )
 
         future.add_callback(self._schedule_execution)
@@ -318,7 +300,13 @@ class Task(Future[T]):
             self._started_promise.set_result(None)
 
     def __repr__(self) -> str:
-        return f'<Task state={self._state.name} for {self._coroutine!r}>'
+        return (
+            '<Task '
+            f'label={self._label} '
+            f'state={self._state.name} '
+            f'for {self._coroutine!r}'
+            '>'
+        )
 
 
 def shield(future: Future[T]) -> Future[T]:
@@ -346,9 +334,11 @@ def _create_promise(
     return _FuturePromise(future)
 
 
-def _create_task(coro: Coroutine[T], *, _loop: Optional[EventLoop] = None) -> Task[T]:
+def _create_task(
+    coro: Coroutine[T], label: str = None, *, _loop: Optional[EventLoop] = None
+) -> Task[T]:
     if _loop is None:
         _loop = _get_loop_inner()
-    task = Task(coro, _loop)
+    task = Task(coro, _loop, label=label)
     task._schedule_execution()
     return task

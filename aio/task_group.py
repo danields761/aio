@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional, TypeVar
+from typing import TYPE_CHECKING, AsyncIterator, Optional, TypeVar
 
 from aio.exceptions import Cancelled, MultiError
-from aio.future import Coroutine, Task, _create_task, shield
+from aio.future import Task, _create_task, shield
 from aio.gather import iter_done_futures
+
+if TYPE_CHECKING:
+    from aio.types import Coroutine
 
 T = TypeVar('T', covariant=True)
 

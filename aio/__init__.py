@@ -1,8 +1,12 @@
 from aio.exceptions import (
     Cancelled,
+    CancelMultiError,
     FutureError,
     FutureFinishedError,
     FutureNotReady,
+    MultiError,
+    NetworkingError,
+    SocketConfigurationError,
 )
 from aio.funcs import guard_async_gen, sleep
 from aio.future import Future, FutureResultCallback, Task

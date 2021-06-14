@@ -10,10 +10,14 @@ async def iter_done_futures(
     *futures: Future[Any],
 ) -> AsyncIterator[AsyncIterable[Future[Any]]]:
     queue = Queue(max_capacity=len(futures))
+    undone_count = len(futures)
 
     def on_future_done(fut_: Future[Any]) -> None:
+        nonlocal undone_count
+
         queue.put_no_wait(fut_)
-        if all(fut.is_finished() for fut in futures):
+        undone_count -= 1
+        if undone_count <= 0:
             queue.close()
 
     for fut in futures:

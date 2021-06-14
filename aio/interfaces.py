@@ -7,22 +7,22 @@ from typing import (
     Any,
     AsyncContextManager,
     Callable,
+    ContextManager,
     Mapping,
     Optional,
     Protocol,
     TypeVar,
 )
 
-from structlog import BoundLogger
-
 if TYPE_CHECKING:
     from aio.future import Coroutine
+    from aio.types import Logger
 
 T = TypeVar('T')
 CallbackType = Callable[..., None]
 
 
-class Clock:
+class Clock(Protocol):
     def now(self) -> float:
         raise NotImplementedError
 
@@ -42,13 +42,17 @@ class EventSelector(Protocol):
     def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
         raise NotImplementedError
 
-    def stop_watch(self, fd: int, events: Optional[int], cb: Optional[EventCallback]) -> None:
+    def stop_watch(
+        self, fd: int, events: Optional[int], cb: Optional[EventCallback]
+    ) -> None:
         raise NotImplementedError
 
     def wakeup_thread_safe(self) -> None:
         raise NotImplementedError
 
-    def finalize(self) -> None:
+
+class UnhandledExceptionHandler(Protocol):
+    def __call__(self, exc: Exception, logger_: Logger, /, **context: Any) -> None:
         raise NotImplementedError
 
 
@@ -64,8 +68,17 @@ class Handle:
         self.cancelled = True
 
 
-class UnhandledExceptionHandler(Protocol):
-    def __call__(self, exc: Exception, logger_: BoundLogger, /, **context: Any) -> None:
+class LoopRunnerFactory(Protocol):
+    def __call__(self, **kwargs: Any) -> ContextManager[LoopRunner]:
+        raise NotImplementedError
+
+
+class LoopRunner(Protocol):
+    @property
+    def loop(self) -> EventLoop:
+        raise NotImplementedError
+
+    def run_coroutine(self, coroutine: Coroutine[T]) -> T:
         raise NotImplementedError
 
 
@@ -92,20 +105,6 @@ class EventLoop(Protocol):
         raise NotImplementedError
 
     def create_networking(self) -> AsyncContextManager[Networking]:
-        raise NotImplementedError
-
-
-class LoopRunner(Protocol):
-    @property
-    def loop(self) -> EventLoop:
-        raise NotImplementedError
-
-    def run_coroutine(self, coroutine: Coroutine[T]) -> T:
-        raise NotImplementedError
-
-
-class LoopFactory(Protocol):
-    def __call__(self, **loop_kwargs: Any) -> tuple[LoopRunner, EventLoop]:
         raise NotImplementedError
 
 

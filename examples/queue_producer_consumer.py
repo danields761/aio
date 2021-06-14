@@ -26,23 +26,4 @@ async def main() -> None:
     print('main done')
 
 
-async def main2() -> None:
-    async def gen():
-        yield 1
-        yield 2
-
-    async for _ in gen():
-        break
-
-    await aio.sleep(10)
-
-
-def process_cb_error(msg, exc, context=None):
-    import traceback
-
-    print(msg, context, file=sys.stderr)
-    traceback.print_exception(type(exc), exc, exc.__traceback__)
-    raise SystemExit(100)
-
-
-aio.run_loop(main2(), exception_handler=process_cb_error)
+aio.run_loop(main())

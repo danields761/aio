@@ -39,12 +39,12 @@ def loop(loop_last_enqueued):
 
 @pytest.fixture
 def create_promise(loop):
-    return lambda th=None: _create_promise(th, _loop=loop)
+    return lambda th=None: _create_promise(th or 'test-future', _loop=loop)
 
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro: _create_task(coro, _loop=loop)
+    return lambda coro, th=None: _create_task(coro, label='test-task', _loop=loop)
 
 
 def finalize_coro(coro_inst: Coroutine):
@@ -208,8 +208,11 @@ class TestFuture:
         ):
             coro_inst.send(None)
 
-        # assert that `should_never_be_called` mock actually hasn't being called
+        # Assert that `should_never_be_called` mock actually hasn't being called
         assert should_never_be_called.mock_calls == []
+
+        # Set future result to prevent warnings
+        promise.set_result(None)
 
     def test_coro_raises_exception_being_set(self, create_promise):
         promise = create_promise()
@@ -251,7 +254,7 @@ class TestFuture:
             assert exc_info.value.value is future_result
 
     def test_await_completed_future(self, create_promise):
-        future_result = Mock(name='future_result')
+        future_result = Mock(name='future-result')
         promise = create_promise()
         future = promise.future
         promise.set_result(future_result)
@@ -294,6 +297,7 @@ class TestTask:
         assert not task.is_finished()
         assert task.state == aio.Future.State.created
 
+        task._cancel('Test end clean-up')
         finalize_coro(coro_inst)
 
     def test_single_step_coro(
@@ -463,7 +467,3 @@ class TestTask:
         assert task.is_finished()
         assert task.is_cancelled()
         assert should_never_be_called.mock_calls == []
-
-
-class TestTaskGroup:
-    pass

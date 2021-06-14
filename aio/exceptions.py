@@ -5,7 +5,7 @@ class NetworkingError(Exception):
     pass
 
 
-class SocketMustBeNonBlockingError(NetworkingError):
+class SocketConfigurationError(NetworkingError):
     pass
 
 
@@ -55,8 +55,8 @@ class CancelMultiError(MultiError, Cancelled):
     def __init__(self, msg: str, *children: Exception):
         if not any(isinstance(child, Cancelled) for child in children):
             raise ValueError(
-                f'`{self.__name__}` could only be created from child brunch exceptions'
-                f'where at least one should be cancellation error'
+                f'`{self.__name__}` could only be created from child branch exceptions'
+                f'where at least one of them is cancellation error'
             )
 
         MultiError.__init__(self, msg, *children)

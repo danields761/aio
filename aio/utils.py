@@ -1,0 +1,89 @@
+import signal
+import sys
+import types
+import warnings
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Literal,
+    Optional,
+    Type,
+    Union,
+)
+from weakref import WeakSet
+
+
+def _emit_undone_async_gen_warn(
+    async_gen: AsyncGenerator[Any, Any], stack_level: int = 0
+) -> None:
+    warnings.warn(
+        f'Async-generator shutdown request income for `{async_gen}`, but this '
+        'event loop doesn\'t supports such behaviour. '
+        'Please, consider either close async-generator manually via `aclose` method '
+        'or use `aio.guard_async_gen` context manager instead.',
+        stacklevel=stack_level + 2,
+    )
+
+
+class WarnUndoneAsyncGens:
+    def __init__(self):
+        self.controlled_async_gens = WeakSet()
+        self.already_emitted: set[int] = set()
+        self._old_first_iter: Optional[Callable] = None
+        self._old_finalize_iter: Optional[Callable] = None
+
+    def _async_gen_first_iter(self, async_gen: AsyncGenerator[Any, Any]) -> None:
+        self.controlled_async_gens.add(async_gen)
+
+    def _async_gen_finalize(self, async_gen: AsyncGenerator[Any, Any]) -> None:
+        self._emit_warning(async_gen, stack_level=1)
+
+    def _emit_warning(
+        self, async_gen: AsyncGenerator[Any, Any], stack_level: int = 0
+    ) -> None:
+        if id(async_gen) in self.already_emitted:
+            return
+        self.already_emitted.add(id(async_gen))
+        _emit_undone_async_gen_warn(async_gen, stack_level=stack_level + 1)
+
+    def __enter__(self) -> None:
+        self._old_first_iter, self._old_finalize_iter = sys.get_asyncgen_hooks()
+        sys.set_asyncgen_hooks(self._async_gen_first_iter, self._async_gen_finalize)
+        return None
+
+    def __exit__(
+        self,
+        exc_type: Type[BaseException],
+        exc_val: BaseException,
+        exc_tb: types.TracebackType,
+    ) -> Optional[bool]:
+        for async_gen in self.controlled_async_gens:
+            self._emit_warning(async_gen)
+        self.controlled_async_gens = []
+        sys.set_asyncgen_hooks(self._old_first_iter, self._old_finalize_iter)
+        return None
+
+
+class SignalHandler:
+    def __init__(
+        self,
+        signal_to_handle: int,
+        new_signal_handler: Union[Callable, Literal[signal.SIG_IGN, signal.SIG_DFL]],
+    ):
+        self._signal_to_handle = signal_to_handle
+        self._new_handler = new_signal_handler
+        self._old_handler: Optional[Callable] = None
+
+    def __enter__(self) -> None:
+        self._old_handler = signal.signal(self._signal_to_handle, self._new_handler)
+
+    def __exit__(
+        self,
+        exc_type: Type[BaseException],
+        exc_val: BaseException,
+        exc_tb: types.TracebackType,
+    ) -> Optional[bool]:
+        signal.signal(self._signal_to_handle, self._old_handler)
+        self._old_handler = None
+        return None
