@@ -73,7 +73,9 @@ def _report_loop_callback_error(
         )
 
     if not task and not future:
-        logger.error(f'Callback {cb} raised an unhandled exception', exc_info=exc)
+        logger.error(
+            f'Callback {cb} raised an unhandled exception', exc_info=exc
+        )
         return
 
     if task:
@@ -140,7 +142,9 @@ class BaseEventLoop(EventLoop):
 
         at_start = self._clock.now()
         clock_resolution = self._clock.resolution()
-        early_callbacks = self._scheduler.pop_pending(at_start + clock_resolution)
+        early_callbacks = self._scheduler.pop_pending(
+            at_start + clock_resolution
+        )
 
         # This logic a bit complicated, but overall idea is simple and acts same how
         # `asyncio` performs loop step
@@ -158,7 +162,9 @@ class BaseEventLoop(EventLoop):
         #
         self._logger.debug(
             'Wait for IO',
-            io_wait_time=(wait_events if wait_events is not None else 'wake-on-io'),
+            io_wait_time=(
+                wait_events if wait_events is not None else 'wake-on-io'
+            ),
         )
         with MeasureElapsed(self._clock) as measure_io_wait:
             selector_callbacks = self._selector.select(
@@ -226,7 +232,9 @@ class BaseEventLoop(EventLoop):
                 elapsed=measure_callbacks.get_elapsed(),
             )
 
-        self._logger.debug('Loop step done', total_elapsed=self._clock.now() - at_start)
+        self._logger.debug(
+            'Loop step done', total_elapsed=self._clock.now() - at_start
+        )
 
     def _invoke_callback(
         self,
@@ -236,7 +244,10 @@ class BaseEventLoop(EventLoop):
         **callback_context: Any,
     ) -> None:
         cv_context.run(
-            self._invoke_callback_within_context, callback, *args, **callback_context
+            self._invoke_callback_within_context,
+            callback,
+            *args,
+            **callback_context,
         )
 
     def _invoke_callback_within_context(
@@ -256,7 +267,9 @@ class BaseEventLoop(EventLoop):
         finally:
             _running_loop.reset(token)
 
-    def _invoke_handle(self, cv_context: contextvars.Context, handle: Handle) -> None:
+    def _invoke_handle(
+        self, cv_context: contextvars.Context, handle: Handle
+    ) -> None:
         if handle.cancelled:
             self._logger.debug('Skipping cancelled handle', handle=handle)
             return
@@ -287,7 +300,9 @@ class BaseEventLoop(EventLoop):
     ) -> Handle:
         if self._debug:
             self._logger.debug(
-                'Enqueuing callback for next cycle', callback=target, callback_args=args
+                'Enqueuing callback for next cycle',
+                callback=target,
+                callback_args=args,
             )
 
         handle = Handle(None, target, args, False, context or {})
@@ -330,7 +345,9 @@ class BaseLoopRunner(LoopRunner):
         self._selector = selector
 
         logger = logger or _log
-        self._logger = logger.bind(component='event-loop-runner', runner_id=id(self))
+        self._logger = logger.bind(
+            component='event-loop-runner', runner_id=id(self)
+        )
 
     @property
     def loop(self) -> EventLoop:
@@ -372,7 +389,9 @@ class BaseLoopRunner(LoopRunner):
                 # Delay cancelling of root task, otherwise `on_keyboard_interrupt`
                 # might be called right inside coroutine and cause surprising behaviour
                 if sigint_received and not root_task.is_finished():
-                    self._logger.debug('Cancelling root task due to keyboard interrupt')
+                    self._logger.debug(
+                        'Cancelling root task due to keyboard interrupt'
+                    )
                     root_task._cancel('Keyboard interrupt')
                     sigint_received = False
                 if received_fut:
@@ -385,8 +404,12 @@ class BaseLoopRunner(LoopRunner):
 @contextmanager
 def _default_loop_runner_factory(
     *,
-    selector_factory: Optional[Callable[[], ContextManager[EventSelector]]] = None,
-    networking_factory: Optional[Callable[[], ContextManager[Networking]]] = None,
+    selector_factory: Optional[
+        Callable[[], ContextManager[EventSelector]]
+    ] = None,
+    networking_factory: Optional[
+        Callable[[], ContextManager[Networking]]
+    ] = None,
     logger: Optional[Logger] = None,
     **loop_kwargs: Any,
 ) -> Iterator[LoopRunner]:

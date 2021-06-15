@@ -50,7 +50,9 @@ class PriorityQueue(Generic[T, P]):
         return list(old_max_priority) + self._pop_prioritized_low(threshold)
 
     def get_items(self) -> list[T]:
-        return list(self._min_priority) + [item for _, _, item in self._prioritized]
+        return list(self._min_priority) + [
+            item for _, _, item in self._prioritized
+        ]
 
     def _pop_prioritized_low(self, threshold: P) -> list[T]:
         new_ready: list[T] = []
@@ -71,7 +73,9 @@ def _handle_priority_getter(handle: Handle) -> Union[float, MinPriority]:
 
 
 class Scheduler(PriorityQueue[Handle, float]):
-    def __init__(self, pending: Iterable[Handle] = (), enqueued: Iterable[Handle] = ()):
+    def __init__(
+        self, pending: Iterable[Handle] = (), enqueued: Iterable[Handle] = ()
+    ):
         if any(handle.when is not None for handle in pending):
             raise ValueError(
                 'Scheduler receives pending handles and '

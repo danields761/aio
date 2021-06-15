@@ -13,7 +13,9 @@ from aio.interfaces import EventSelector, Executor
 T = TypeVar('T')
 
 
-def _ignore_feature_finished_error(fn: Callable[..., None], *args: Any) -> None:
+def _ignore_feature_finished_error(
+    fn: Callable[..., None], *args: Any
+) -> None:
     try:
         fn(*args)
     except FutureFinishedError:
@@ -73,7 +75,9 @@ class ConcurrentExecutor(Executor):
                 )
             elif exc := cfuture.exception():
                 if not isinstance(exc, Exception):
-                    new_exc = RuntimeError('Callable raises `BaseException` subclass')
+                    new_exc = RuntimeError(
+                        'Callable raises `BaseException` subclass'
+                    )
                     new_exc.__cause__ = exc
                     exc = new_exc
 
@@ -82,7 +86,9 @@ class ConcurrentExecutor(Executor):
                 )
             else:
                 loop.call_soon_thread_safe(
-                    _ignore_feature_finished_error, waiter.set_result, cfuture.result
+                    _ignore_feature_finished_error,
+                    waiter.set_result,
+                    cfuture.result,
                 )
 
         cfuture.add_done_callback(on_result_from_executor)
@@ -96,7 +102,10 @@ class ConcurrentExecutor(Executor):
 
 async def _close_std_executor(executor: _Executor) -> None:
     await _stupid_execute_on_thread(
-        executor.shutdown, 'executor-shutdowner', wait=True, cancel_futures=True
+        executor.shutdown,
+        'executor-shutdowner',
+        wait=True,
+        cancel_futures=True,
     )
 
 

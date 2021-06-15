@@ -97,7 +97,9 @@ async def task_group() -> AsyncIterator[TaskGroup]:
         assert join_task.is_finished()
     except (MultiError, Cancelled) as exc:
         if body_exc:
-            raise MultiError('Body exception aborts children task', body_exc, exc)
+            raise MultiError(
+                'Body exception aborts children task', body_exc, exc
+            )
         else:
             raise
 

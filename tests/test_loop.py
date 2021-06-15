@@ -19,7 +19,9 @@ def process_callback_exception(exc, **__) -> None:
     import traceback
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)
-    pytest.fail('No unhandled exceptions is allowed inside callbacks during testing')
+    pytest.fail(
+        'No unhandled exceptions is allowed inside callbacks during testing'
+    )
 
 
 @pytest.fixture
@@ -134,7 +136,9 @@ class TestLoopStepping:
         self, clock, selector, make_loop, same_time_events_count
     ):
         parent_cb = Mock()
-        cbs = [getattr(parent_cb, f'cb{i}') for i in range(same_time_events_count)]
+        cbs = [
+            getattr(parent_cb, f'cb{i}') for i in range(same_time_events_count)
+        ]
         last_cb = parent_cb.cb2
         scheduler = Scheduler(
             [], [Handle(55.0, cb) for cb in cbs] + [Handle(60.0, last_cb)]
@@ -279,7 +283,9 @@ class TestLoopStepping:
 
         selector.select.side_effect = (
             # returning DEFAULT force mock to proceed to call 'wraps' object
-            lambda *_: (scheduler.enqueue(Handle(None, enqueued_cb)) or DEFAULT)
+            lambda *_: (
+                scheduler.enqueue(Handle(None, enqueued_cb)) or DEFAULT
+            )
         )
 
         loop.run_step()
@@ -298,7 +304,9 @@ class TestLoopStepping:
 
         selector.select.side_effect = (
             # returning DEFAULT force mock to proceed to call 'wraps' object
-            lambda *_: (scheduler.enqueue(Handle(clock.now(), enqueued_cb)) or DEFAULT)
+            lambda *_: (
+                scheduler.enqueue(Handle(clock.now(), enqueued_cb)) or DEFAULT
+            )
         )
 
         loop.run_step()
@@ -308,7 +316,9 @@ class TestLoopStepping:
         assert enqueued_cb.mock_calls == [call()]
         assert scheduler.get_items() == []
 
-    def test_enqueue_much_later_during_select(self, selector, clock, make_loop):
+    def test_enqueue_much_later_during_select(
+        self, selector, clock, make_loop
+    ):
         first_cb = Mock(name='first-cb')
         enqueued_cb = Mock(name='enqueued-cb')
         enqueued_handle = Handle(100, enqueued_cb)
@@ -434,7 +444,9 @@ class TestLoopRunner:
         assert should_be_called.mock_calls == [call()]
         assert should_not_be_called.mock_calls == []
 
-    def test_should_warn_if_async_gen_being_gc_while_not_finished(self, runner):
+    def test_should_warn_if_async_gen_being_gc_while_not_finished(
+        self, runner
+    ):
         should_be_called_in_root = Mock()
         should_be_called_in_gen = Mock()
 
@@ -455,7 +467,8 @@ class TestLoopRunner:
         assert should_be_called_in_root.mock_calls == [call()]
         assert should_be_called_in_gen.mock_calls == [call()]
         assert any(
-            'Async-generator shutdown request income for' in warn.message.args[0]
+            'Async-generator shutdown request income for'
+            in warn.message.args[0]
             and warn.filename == __file__
             for warn in warn_info.list
         )

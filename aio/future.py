@@ -156,13 +156,17 @@ class Future(Generic[T]):
         return self.is_finished() and isinstance(self._exc, Cancelled)
 
     def _call_callbacks(self) -> None:
-        assert self.is_finished(), 'Future must finish before calling callbacks'
+        assert (
+            self.is_finished()
+        ), 'Future must finish before calling callbacks'
 
         for cb in self._result_callbacks:
             self._schedule_callback(cb)
 
     def _schedule_callback(self, cb: FutureResultCallback) -> None:
-        assert self.is_finished(), 'Future must finish before scheduling callbacks'
+        assert (
+            self.is_finished()
+        ), 'Future must finish before scheduling callbacks'
 
         self._loop.call_soon(cb, self, context=self._context)
 
@@ -188,7 +192,9 @@ class Future(Generic[T]):
             yield self
 
         if not self.is_finished():
-            raise FutureNotReady('The future object resumed before result has been set')
+            raise FutureNotReady(
+                'The future object resumed before result has been set'
+            )
 
         if self._exception:
             raise self._exception
@@ -219,7 +225,9 @@ class Future(Generic[T]):
             )
 
 
-_current_task: contextvars.ContextVar[Task] = contextvars.ContextVar('current-task')
+_current_task: contextvars.ContextVar[Task] = contextvars.ContextVar(
+    'current-task'
+)
 
 
 class Task(Future[T]):

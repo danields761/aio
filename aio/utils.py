@@ -39,7 +39,9 @@ class WarnUndoneAsyncGens:
         self._old_first_iter: Optional[Callable] = None
         self._old_finalize_iter: Optional[Callable] = None
 
-    def _async_gen_first_iter(self, async_gen: AsyncGenerator[Any, Any]) -> None:
+    def _async_gen_first_iter(
+        self, async_gen: AsyncGenerator[Any, Any]
+    ) -> None:
         self.controlled_async_gens.add(async_gen)
 
     def _async_gen_finalize(self, async_gen: AsyncGenerator[Any, Any]) -> None:
@@ -54,8 +56,13 @@ class WarnUndoneAsyncGens:
         _emit_undone_async_gen_warn(async_gen, stack_level=stack_level + 1)
 
     def __enter__(self) -> None:
-        self._old_first_iter, self._old_finalize_iter = sys.get_asyncgen_hooks()
-        sys.set_asyncgen_hooks(self._async_gen_first_iter, self._async_gen_finalize)
+        (
+            self._old_first_iter,
+            self._old_finalize_iter,
+        ) = sys.get_asyncgen_hooks()
+        sys.set_asyncgen_hooks(
+            self._async_gen_first_iter, self._async_gen_finalize
+        )
         return None
 
     def __exit__(
@@ -75,14 +82,18 @@ class SignalHandlerInstaller:
     def __init__(
         self,
         signal_to_handle: int,
-        new_signal_handler: Union[Callable, Literal[signal.SIG_IGN, signal.SIG_DFL]],
+        new_signal_handler: Union[
+            Callable, Literal[signal.SIG_IGN, signal.SIG_DFL]
+        ],
     ):
         self._signal_to_handle = signal_to_handle
         self._new_handler = new_signal_handler
         self._old_handler: Optional[Callable] = None
 
     def __enter__(self) -> None:
-        self._old_handler = signal.signal(self._signal_to_handle, self._new_handler)
+        self._old_handler = signal.signal(
+            self._signal_to_handle, self._new_handler
+        )
 
     def __exit__(
         self,

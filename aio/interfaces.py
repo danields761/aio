@@ -35,7 +35,9 @@ class EventCallback(Protocol):
 
 
 class EventSelector(Protocol):
-    def select(self, time_: Optional[float]) -> list[tuple[EventCallback, int, int]]:
+    def select(
+        self, time_: Optional[float]
+    ) -> list[tuple[EventCallback, int, int]]:
         raise NotImplementedError
 
     def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
@@ -163,7 +165,9 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, Any]:
+    async def sock_accept(
+        self, sock: socket.socket
+    ) -> tuple[socket.socket, Any]:
         """
 
         :param sock:

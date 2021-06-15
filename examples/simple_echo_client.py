@@ -15,13 +15,17 @@ async def client(host, port):
                         print(f"Connection to {host}:{port} established")
                         break
                     except ConnectionRefusedError:
-                        print(f'Unable to connect to "{host}:{port}", waiting 1 sec...')
+                        print(
+                            f'Unable to connect to "{host}:{port}", waiting 1 sec...'
+                        )
                         await aio.sleep(1)
 
                 while True:
                     data = await networking.sock_read(s, 1024)
                     print("Received", data)
-                    await networking.sock_write(s, b"Echoed back: " + data + b"\n")
+                    await networking.sock_write(
+                        s, b"Echoed back: " + data + b"\n"
+                    )
     finally:
         print("Client has stopped")
 

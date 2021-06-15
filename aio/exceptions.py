@@ -43,7 +43,8 @@ class MultiError(Exception):
     def __repr__(self) -> str:
         fl = f'{type(self).__name__}{f": {self.msg}" if self.msg else ""}'
         lines = tuple(
-            f'\t{idx}: {exc!r}' for idx, exc in enumerate(self.children, start=1)
+            f'\t{idx}: {exc!r}'
+            for idx, exc in enumerate(self.children, start=1)
         )
         return '\n'.join((fl,) + lines)
 

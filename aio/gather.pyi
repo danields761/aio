@@ -28,7 +28,11 @@ async def iter_done_futures(
 ) -> AsyncIterator[Future[Union[T1, T2, T3, T4]]]: ...
 @overload
 async def iter_done_futures(
-    f1: Future[T1], f2: Future[T2], f3: Future[T3], f4: Future[T4], f5: Future[T5]
+    f1: Future[T1],
+    f2: Future[T2],
+    f3: Future[T3],
+    f4: Future[T4],
+    f5: Future[T5],
 ) -> AsyncIterator[Future[Union[T1, T2, T3, T4, T5]]]: ...
 @overload
 async def iter_done_futures(
@@ -73,4 +77,6 @@ async def iter_done_futures(
     f9: Future[T9],
 ) -> AsyncIterator[Future[Union[T1, T2, T3, T4, T5, T6, T7, T8, T9]]]: ...
 @overload
-async def iter_done_futures(*futures: Future[Any]) -> AsyncIterator[Future[Any]]: ...
+async def iter_done_futures(
+    *futures: Future[Any],
+) -> AsyncIterator[Future[Any]]: ...
