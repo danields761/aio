@@ -16,7 +16,6 @@ from typing import (
 
 if TYPE_CHECKING:
     from aio.future import Coroutine
-    from aio.types import Logger
 
 T = TypeVar('T')
 CallbackType = Callable[..., None]
@@ -36,7 +35,7 @@ class EventCallback(Protocol):
 
 
 class EventSelector(Protocol):
-    def select(self, time_: Optional[float]) -> None:
+    def select(self, time_: Optional[float]) -> list[tuple[EventCallback, int, int]]:
         raise NotImplementedError
 
     def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
@@ -52,7 +51,7 @@ class EventSelector(Protocol):
 
 
 class UnhandledExceptionHandler(Protocol):
-    def __call__(self, exc: Exception, logger_: Logger, /, **context: Any) -> None:
+    def __call__(self, exc: BaseException, /, **context: Any) -> None:
         raise NotImplementedError
 
 
@@ -100,11 +99,38 @@ class EventLoop(Protocol):
     ) -> Handle:
         raise NotImplementedError
 
+    def call_soon_thread_safe(
+        self,
+        target: CallbackType,
+        *args: Any,
+        context: Optional[Mapping[str, Any]] = None,
+    ) -> Handle:
+        raise NotImplementedError
+
+    def call_later_thread_safe(
+        self,
+        timeout: float,
+        target: CallbackType,
+        *args: Any,
+        context: Optional[Mapping[str, Any]] = None,
+    ) -> Handle:
+        raise NotImplementedError
+
     @property
     def clock(self) -> Clock:
         raise NotImplementedError
 
     def create_networking(self) -> AsyncContextManager[Networking]:
+        raise NotImplementedError
+
+    def create_executor(self) -> AsyncContextManager[Executor]:
+        raise NotImplementedError
+
+
+class Executor(Protocol):
+    async def execute_sync_callable(
+        self, fn: Callable[..., T], /, *args: Any, **kwargs: Any
+    ) -> T:
         raise NotImplementedError
 
 

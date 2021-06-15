@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Optional, TypeVar
 
 from aio.exceptions import Cancelled, MultiError
-from aio.future import Task, _create_task, shield
+from aio.funcs import shield
+from aio.future import Task, _create_task
 from aio.gather import iter_done_futures
 
 if TYPE_CHECKING:

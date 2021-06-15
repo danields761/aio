@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import inspect
 import warnings
 from enum import IntEnum
@@ -16,7 +17,7 @@ from typing import (
 
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
 from aio.interfaces import EventLoop
-from aio.loop import _get_loop_inner
+from aio.loop import _get_running_loop
 
 if TYPE_CHECKING:
     from aio.types import Coroutine
@@ -218,6 +219,9 @@ class Future(Generic[T]):
             )
 
 
+_current_task: contextvars.ContextVar[Task] = contextvars.ContextVar('current-task')
+
+
 class Task(Future[T]):
     def __init__(
         self,
@@ -247,7 +251,7 @@ class Task(Future[T]):
             # Recursively cancel all inner tasks
             self._waiting_on._cancel(msg)
         else:
-            # TODO Check coroutine finished
+            # TODO Check coroutine finished or not started
             super()._cancel(msg)
 
     def _schedule_execution(self, _: Optional[Future[Any]] = None) -> None:
@@ -256,8 +260,9 @@ class Task(Future[T]):
             self._state = Future.State.scheduled
 
     def _execute_coroutine_step(self) -> None:
+        cv_context = contextvars.copy_context()
         try:
-            future = self._coroutine.send(None)
+            future = cv_context.run(self._send_to_coroutine_within_new_context)
         except StopIteration as exc:
             val: T = exc.value
             self._set_result(val=val)
@@ -299,6 +304,13 @@ class Task(Future[T]):
         if not self._started_promise.future.is_finished():
             self._started_promise.set_result(None)
 
+    def _send_to_coroutine_within_new_context(self) -> Future[T]:
+        reset_token = _current_task.set(self)
+        try:
+            return self._coroutine.send(None)
+        finally:
+            _current_task.reset(reset_token)
+
     def __repr__(self) -> str:
         return (
             '<Task '
@@ -309,27 +321,11 @@ class Task(Future[T]):
         )
 
 
-def shield(future: Future[T]) -> Future[T]:
-    shield_promise: Promise[T] = _create_promise()
-
-    def future_done_cb(_: Future[T]) -> None:
-        assert future.is_finished()
-
-        if future.exception:
-            shield_promise.set_exception(future.exception)
-        else:
-            shield_promise.set_result(future.result)
-
-    future.add_callback(future_done_cb)
-
-    return shield_promise.future
-
-
 def _create_promise(
     label: str = None, *, _loop: Optional[EventLoop] = None, **context: Any
 ) -> Promise[T]:
     if _loop is None:
-        _loop = _get_loop_inner()
+        _loop = _get_running_loop()
     future: Future[T] = Future(_loop, label=label, **context)
     return _FuturePromise(future)
 
@@ -338,7 +334,7 @@ def _create_task(
     coro: Coroutine[T], label: str = None, *, _loop: Optional[EventLoop] = None
 ) -> Task[T]:
     if _loop is None:
-        _loop = _get_loop_inner()
+        _loop = _get_running_loop()
     task = Task(coro, _loop, label=label)
     task._schedule_execution()
     return task

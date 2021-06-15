@@ -467,3 +467,36 @@ class TestTask:
         assert task.is_finished()
         assert task.is_cancelled()
         assert should_never_be_called.mock_calls == []
+
+    def test_current_task_accessible_from_coro(
+        self, create_task, loop_call_last_enqueued
+    ):
+        should_be_called = Mock(name='should_be_called')
+
+        async def coro():
+            should_be_called()
+            assert await aio.get_current_task() is task
+
+        task = create_task(coro())
+        loop_call_last_enqueued()
+
+        assert should_be_called.mock_calls == [call()]
+
+    def test_current_task_accessible_from_coro_multiple_tasks(
+        self, create_task, loop_call_last_enqueued
+    ):
+        should_be_called = Mock(name='should_be_called')
+
+        async def coro1():
+            should_be_called()
+            assert await aio.get_current_task() is task1
+
+        async def coro2():
+            should_be_called()
+            assert await aio.get_current_task() is task2
+
+        task1 = create_task(coro1())
+        task2 = create_task(coro2())
+        loop_call_last_enqueued()
+
+        assert should_be_called.mock_calls == [call(), call()]

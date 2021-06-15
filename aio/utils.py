@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import signal
 import sys
 import types
 import warnings
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncGenerator,
     Callable,
@@ -12,6 +15,9 @@ from typing import (
     Union,
 )
 from weakref import WeakSet
+
+if TYPE_CHECKING:
+    from aio.interfaces import Clock
 
 
 def _emit_undone_async_gen_warn(
@@ -65,7 +71,7 @@ class WarnUndoneAsyncGens:
         return None
 
 
-class SignalHandler:
+class SignalHandlerInstaller:
     def __init__(
         self,
         signal_to_handle: int,
@@ -86,4 +92,27 @@ class SignalHandler:
     ) -> Optional[bool]:
         signal.signal(self._signal_to_handle, self._old_handler)
         self._old_handler = None
+        return None
+
+
+class MeasureElapsed:
+    def __init__(self, clock: Clock):
+        self._last_enter_at: Optional[float] = None
+        self._clock = clock
+
+    def get_elapsed(self) -> float:
+        if self._last_enter_at is None:
+            raise RuntimeError('Measure not started')
+        return self._clock.now() - self._last_enter_at
+
+    def __enter__(self) -> MeasureElapsed:
+        self._last_enter_at = self._clock.now()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Type[BaseException],
+        exc_val: BaseException,
+        exc_tb: types.TracebackType,
+    ) -> Optional[bool]:
         return None

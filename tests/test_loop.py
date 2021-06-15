@@ -9,9 +9,13 @@ import aio
 from aio.components.scheduler import Scheduler
 from aio.interfaces import Clock, Handle
 from aio.loop import BaseEventLoop, BaseLoopRunner
+from tests.utils import mock_wraps
 
 
-def process_handle_exception(exc, logger_, /, **context) -> None:
+def process_callback_exception(exc, **__) -> None:
+    if isinstance(exc, AssertionError):
+        raise exc
+
     import traceback
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)
@@ -34,6 +38,7 @@ def selector(clock):
         if time_ is None:
             return
         clock.now.return_value += time_
+        return []
 
     selector.select = Mock(wraps=selector_select)
     return selector
@@ -47,8 +52,12 @@ class TestLoopStepping:
             networking_factory=Mock(side_effect=Exception('Not exists.')),
             clock=clock,
             scheduler=scheduler,
-            exception_handler=process_handle_exception,
+            exception_handler=process_callback_exception,
         )
+
+    def test_runs_io_callbacks(self, selector, make_loop):
+        # TODO
+        pass
 
     def test_runs_only_expired_cbs(self, clock, selector, make_loop):
         parent_cb = Mock()
@@ -189,7 +198,7 @@ class TestLoopStepping:
         ]
         assert clock.now() == 65.0
 
-    def test_runs_pending_cbs(self, clock, selector, make_loop):
+    def test_runs_pending_cbs_immediately(self, clock, selector, make_loop):
         parent_cb = Mock()
         cb0 = parent_cb.cb0
         cb1 = parent_cb.cb1
@@ -203,7 +212,7 @@ class TestLoopStepping:
         assert selector.mock_calls == [call.select(0)]
         assert clock.now() == 50.0
 
-    def test_zero_time_select_if_pending_cbs(self, selector, clock, make_loop):
+    def test_runs_only_pending_cbs(self, selector, clock, make_loop):
         cb1 = Mock()
         cb2 = Mock()
         scheduler = Scheduler([Handle(None, cb1)], [Handle(60, cb2)])
@@ -218,7 +227,7 @@ class TestLoopStepping:
         assert clock.now() == 50
 
     @pytest.mark.parametrize('now', [0.0, 15.0])
-    def test_executes_handle_eagerly_if_below_clock_resolution(
+    def test_executes_handle_eagerly_if_time_less_clock_resolution(
         self, selector, clock, make_loop, now
     ):
         clock.now.return_value = now
@@ -319,6 +328,39 @@ class TestLoopStepping:
         assert enqueued_cb.mock_calls == []
         assert scheduler.get_items() == [enqueued_handle]
 
+    def test_sets_running_loop_cv_in_handle_callback(self, make_loop):
+        with pytest.raises(LookupError):
+            aio.loop._running_loop.get()
+
+        @mock_wraps
+        def handle_cb():
+            assert aio.loop._running_loop.get() is loop
+
+        loop = make_loop(Scheduler([Handle(None, handle_cb)]))
+        loop.run_step()
+        assert handle_cb.mock_calls == [call()]
+
+        with pytest.raises(LookupError):
+            aio.loop._running_loop.get()
+
+    def test_sets_running_loop_cv_in_io_callback(self, make_loop, selector):
+        with pytest.raises(LookupError):
+            aio.loop._running_loop.get()
+
+        @mock_wraps
+        def io_callback(*_):
+            assert aio.loop._running_loop.get() is loop
+
+        selector.select = lambda *_: [(io_callback, 0, 0)]
+
+        loop = make_loop(Scheduler())
+        loop.run_step()
+
+        assert io_callback.mock_calls == [call(0, 0)]
+
+        with pytest.raises(LookupError):
+            aio.loop._running_loop.get()
+
 
 class TestLoopRunner:
     @pytest.fixture
@@ -342,6 +384,14 @@ class TestLoopRunner:
         runner.run_coroutine(root())
 
         assert should_be_called.mock_calls == [call()]
+
+    def test_returns_coroutine_result(self, runner):
+        result = Mock(name='result')
+
+        async def root():
+            return result
+
+        assert runner.run_coroutine(root()) == result
 
     def test_propagates_coroutine_exception(self, runner):
         async def root():

@@ -4,19 +4,24 @@ import functools
 import selectors
 import socket
 from collections import defaultdict
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, cast
+from contextlib import closing, contextmanager
+from typing import TYPE_CHECKING, Any, ContextManager, Iterator, Optional, cast
 
 import structlog
 
 from aio.exceptions import SocketConfigurationError
-from aio.interfaces import EventCallback, EventSelector, Networking
+from aio.interfaces import (
+    EventCallback,
+    EventSelector,
+    Networking,
+    UnhandledExceptionHandler,
+)
 
 if TYPE_CHECKING:
     from aio.future import Promise
     from aio.types import Logger, STDSelector
 
-log = structlog.get_logger(__name__)
+_log = structlog.get_logger(__name__)
 
 _SelectorKeyData = set[tuple[int, EventCallback]]
 
@@ -30,7 +35,7 @@ class _SelectorWakeupper:
     ):
         self._selector = selector
         self._receiver, self._sender = socket.socketpair()
-        self._logger = (logger or log).bind(component='selector-wakeupper')
+        self._logger = (logger or _log).bind(component='selector-wakeupper')
 
         self._init_self_pipe()
 
@@ -82,14 +87,12 @@ class _SelectorWakeupper:
 class SelectorsEventsSelector(EventSelector):
     def __init__(
         self,
-        callback_invoker: Callable[[EventCallback, int, int], None],
         *,
         selector: Optional[STDSelector[_SelectorKeyData]] = None,
         logger: Optional[Logger] = None,
     ):
         """
 
-        :param callback_invoker:
         :param selector: selector to use
             This class owns selector object and takes care of finalization of it,
             thus the argument intended to be used in tests.
@@ -97,22 +100,21 @@ class SelectorsEventsSelector(EventSelector):
         self._selector: STDSelector[_SelectorKeyData] = (
             selector or selectors.DefaultSelector()
         )
-        self._callback_invoker = callback_invoker
-        self._logger = (logger or log).bind(component='selectors-event-selector')
+        self._logger = (logger or _log).bind(component='selectors-event-selector')
 
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
         self._is_finalized = False
 
-    def select(self, timeout: Optional[float]) -> None:
+    def select(self, timeout: Optional[float]) -> list[tuple[EventCallback, int, int]]:
         self._check_not_finalized()
 
         ready = self._selector.select(timeout)
-        for key, events in ready:
-            for need_events, callback in key.data:
-                if events & need_events != need_events:
-                    continue
-
-                self._callback_invoker(callback, key.fd, events)
+        return [
+            (callback, key.fd, events)
+            for key, events in ready
+            for need_events, callback in key.data
+            if events & need_events == need_events
+        ]
 
     def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
         self._check_not_finalized()
@@ -157,6 +159,8 @@ class SelectorsEventsSelector(EventSelector):
             self._selector.unregister(fd)
 
     def wakeup_thread_safe(self) -> None:
+        self._check_not_finalized()
+
         self._wakeupper.wakeup()
 
     def close(self) -> None:
@@ -179,8 +183,7 @@ class SelectorNetworking(Networking):
         logger: Optional[Logger] = None,
     ):
         self._selector = selector
-        logger = logger or log
-        self._logger = logger.bind(component='networking')
+        self._logger = (logger or _log).bind(component='networking')
 
         self._managed_sockets_refs: defaultdict[int, int] = defaultdict(lambda: 0)
         self._waiters: set[Promise[Any]] = set()
@@ -283,3 +286,17 @@ class SelectorNetworking(Networking):
             raise SocketConfigurationError('Socket has invalid file-id')
         if sock.getblocking():
             raise SocketConfigurationError('Socket is blocking')
+
+
+def create_selectors_event_selector(
+    logger: Optional[Logger] = None,
+) -> ContextManager[EventSelector]:
+    return closing(
+        SelectorsEventsSelector(logger=logger)
+    )
+
+
+def create_selector_networking(
+    selector: EventSelector, logger: Optional[Logger] = None
+) -> ContextManager[SelectorNetworking]:
+    return closing(SelectorNetworking(selector, logger=logger))
