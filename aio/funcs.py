@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterable, TypeVar
+from typing import Any, AsyncGenerator, AsyncIterable, TypeVar, AsyncIterator
 
 from aio.exceptions import Cancelled
 from aio.future import Future, Promise, Task, _create_promise, _current_task
@@ -50,7 +50,7 @@ def shield(future: Future[T]) -> Future[T]:
 async def sleep(sec: float) -> None:
     loop = await get_loop()
 
-    sleep_promise = _create_promise()
+    sleep_promise: Promise[None] = _create_promise()
     handle = loop.call_later(sec, sleep_promise.set_result, None)
 
     try:
@@ -63,7 +63,7 @@ async def sleep(sec: float) -> None:
 @asynccontextmanager
 async def guard_async_gen(
     async_gen: AsyncGenerator[T_co, T_contra]
-) -> AsyncIterable[T_co]:
+) -> AsyncIterator[AsyncGenerator[T_co, T_contra]]:
     try:
         yield async_gen
     finally:

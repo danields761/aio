@@ -4,8 +4,10 @@ from aio.interfaces import Clock
 
 
 class MonotonicClock(Clock):
-    def __init__(self):
-        self._resolution = time.get_clock_info('monotonic').resolution
+    def __init__(self) -> None:
+        resolution = time.get_clock_info('monotonic').resolution
+        assert isinstance(resolution, float)
+        self._resolution = resolution
 
     def now(self) -> float:
         return time.monotonic()

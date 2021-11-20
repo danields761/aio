@@ -5,7 +5,7 @@ import selectors
 import socket
 from collections import defaultdict
 from contextlib import closing, contextmanager
-from typing import TYPE_CHECKING, Any, ContextManager, Iterator, Optional, cast
+from typing import TYPE_CHECKING, Any, ContextManager, Iterator, cast
 
 import structlog
 
@@ -14,7 +14,6 @@ from aio.interfaces import (
     EventCallback,
     EventSelector,
     Networking,
-    UnhandledExceptionHandler,
 )
 
 if TYPE_CHECKING:
@@ -31,8 +30,8 @@ class _SelectorWakeupper:
         self,
         selector: STDSelector[_SelectorKeyData],
         *,
-        logger: Optional[Logger] = None,
-    ):
+        logger: Logger | None = None,
+    ) -> None:
         self._selector = selector
         self._receiver, self._sender = socket.socketpair()
         self._logger = (logger or _log).bind(component='selector-wakeupper')
@@ -55,9 +54,7 @@ class _SelectorWakeupper:
 
     def wakeup(self) -> None:
         try:
-            self._logger.debug(
-                'Wake-up request arrived, writing one byte to self-pipe'
-            )
+            self._logger.debug('Wake-up request arrived, writing one byte to self-pipe')
             self._sender.send(b'1')
         except OSError as exc:
             self._logger.warning(
@@ -90,28 +87,24 @@ class SelectorsEventsSelector(EventSelector):
     def __init__(
         self,
         *,
-        selector: Optional[STDSelector[_SelectorKeyData]] = None,
-        logger: Optional[Logger] = None,
-    ):
+        selector: STDSelector[_SelectorKeyData] | None = None,
+        logger: Logger | None = None,
+    ) -> None:
         """
 
         :param selector: selector to use
             This class owns selector object and takes care of finalization of it,
             thus the argument intended to be used in tests.
         """
-        self._selector: STDSelector[_SelectorKeyData] = (
-            selector or selectors.DefaultSelector()
+        self._selector: STDSelector[_SelectorKeyData] = selector or cast(
+            STDSelector[_SelectorKeyData], selectors.DefaultSelector()
         )
-        self._logger = (logger or _log).bind(
-            component='selectors-event-selector'
-        )
+        self._logger = (logger or _log).bind(component='selectors-event-selector')
 
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
         self._is_finalized = False
 
-    def select(
-        self, timeout: Optional[float]
-    ) -> list[tuple[EventCallback, int, int]]:
+    def select(self, timeout: float | None) -> list[tuple[EventCallback, int, int]]:
         self._check_not_finalized()
 
         ready = self._selector.select(timeout)
@@ -135,21 +128,19 @@ class SelectorsEventsSelector(EventSelector):
                 key.data | {(events, cb)},
             )
 
-    def stop_watch(
-        self, fd: int, events: Optional[int], cb: Optional[EventCallback]
-    ) -> None:
+    def stop_watch(self, fd: int, events: int | None, cb: EventCallback | None) -> None:
         self._check_not_finalized()
 
         if (events is None) != (cb is None):
-            raise ValueError(
-                '`events` and `cb` args must be both either defined or not'
-            )
+            raise ValueError('`events` and `cb` args must be both either defined or not')
         if events is None and cb is None:
             self._selector.unregister(fd)
             return
 
+        assert events is not None and cb is not None
+
         key = self._selector.get_key(fd)
-        exists_need_events: Optional[int] = None
+        exists_need_events: int | None = None
         for reg_events, reg_cb in key.data:
             if reg_cb != cb:
                 continue
@@ -176,9 +167,7 @@ class SelectorsEventsSelector(EventSelector):
 
     def _check_not_finalized(self) -> None:
         if self._is_finalized:
-            raise RuntimeError(
-                'Attempt to use selector which has been already finalized'
-            )
+            raise RuntimeError('Attempt to use selector which has been already finalized')
 
 
 class SelectorNetworking(Networking):
@@ -186,14 +175,12 @@ class SelectorNetworking(Networking):
         self,
         selector: EventSelector,
         *,
-        logger: Optional[Logger] = None,
-    ):
+        logger: Logger | None = None,
+    ) -> None:
         self._selector = selector
         self._logger = (logger or _log).bind(component='networking')
 
-        self._managed_sockets_refs: defaultdict[int, int] = defaultdict(
-            lambda: 0
-        )
+        self._managed_sockets_refs: defaultdict[int, int] = defaultdict(lambda: 0)
         self._waiters: set[Promise[Any]] = set()
 
     async def wait_sock_ready_to_read(self, sock: socket.socket) -> None:
@@ -202,12 +189,10 @@ class SelectorNetworking(Networking):
     async def wait_sock_ready_to_write(self, sock: socket.socket) -> None:
         await self._wait_sock_events(sock, selectors.EVENT_WRITE, 'write')
 
-    async def _wait_sock_events(
-        self, sock: socket.socket, events: int, event_name: str
-    ) -> None:
+    async def _wait_sock_events(self, sock: socket.socket, events: int, event_name: str) -> None:
         from aio.future import _create_promise
 
-        waiter = _create_promise(f'socket-{event_name}-waiter', sock=sock)
+        waiter: Promise[Any] = _create_promise(f'socket-{event_name}-waiter', sock=sock)
 
         def done_cb(_: int, __: int) -> None:
             if not waiter.future.is_finished():
@@ -231,13 +216,9 @@ class SelectorNetworking(Networking):
                 except BlockingIOError:
                     pass
 
-                await self._wait_sock_events(
-                    sock, selectors.EVENT_WRITE, 'connect'
-                )
+                await self._wait_sock_events(sock, selectors.EVENT_WRITE, 'connect')
 
-    async def sock_accept(
-        self, sock: socket.socket
-    ) -> tuple[socket.socket, Any]:
+    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, Any]:
         with self._manage_sock(sock):
             while True:
                 try:
@@ -249,9 +230,7 @@ class SelectorNetworking(Networking):
                     self._managed_sockets_refs[conn.fileno()] += 1
                     return conn, addr
 
-                await self._wait_sock_events(
-                    sock, selectors.EVENT_READ, 'accept'
-                )
+                await self._wait_sock_events(sock, selectors.EVENT_READ, 'accept')
 
     async def sock_read(self, sock: socket.socket, amount: int) -> bytes:
         with self._manage_sock(sock):
@@ -303,12 +282,12 @@ class SelectorNetworking(Networking):
 
 
 def create_selectors_event_selector(
-    logger: Optional[Logger] = None,
+    logger: Logger | None = None,
 ) -> ContextManager[EventSelector]:
     return closing(SelectorsEventsSelector(logger=logger))
 
 
 def create_selector_networking(
-    selector: EventSelector, logger: Optional[Logger] = None
+    selector: EventSelector, logger: Logger | None = None
 ) -> ContextManager[SelectorNetworking]:
     return closing(SelectorNetworking(selector, logger=logger))

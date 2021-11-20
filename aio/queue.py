@@ -25,7 +25,7 @@ class QueueClosed(QueueBaseError):
 
 
 class QueueAsyncIterator(AsyncIterator[T]):
-    def __init__(self, queue: Queue[T]):
+    def __init__(self, queue: Queue[T]) -> None:
         self._queue = queue
 
     async def __anext__(self) -> T:
@@ -36,12 +36,7 @@ class QueueAsyncIterator(AsyncIterator[T]):
 
 
 class Queue(AsyncIterable[T]):
-    def __init__(
-        self,
-        prepopulate: Iterable[T] = (),
-        *,
-        max_capacity: int = None,
-    ):
+    def __init__(self, prepopulate: Iterable[T] = (), *, max_capacity: int | None = None) -> None:
         self._container = deque(prepopulate)
         self._read_waiters_q: deque[Promise[T]] = deque()
         self._write_waiters_q: deque[Tuple[T, Promise[None]]] = deque()
@@ -78,7 +73,7 @@ class Queue(AsyncIterable[T]):
         except QueueEmptyError:
             pass
 
-        waiter_promise = _create_promise()
+        waiter_promise: Promise[T] = _create_promise()
         self._read_waiters_q.append(waiter_promise)
 
         try:
@@ -93,10 +88,7 @@ class Queue(AsyncIterable[T]):
         if self._closed:
             raise QueueClosed
 
-        if (
-            self._max_capacity is not None
-            and len(self._container) >= self._max_capacity
-        ):
+        if self._max_capacity is not None and len(self._container) >= self._max_capacity:
             assert len(self._read_waiters_q) == 0
 
             raise QueueOverflowedError
@@ -119,7 +111,7 @@ class Queue(AsyncIterable[T]):
 
         assert self._max_capacity is not None
 
-        waiter_promise = _create_promise()
+        waiter_promise: Promise[None] = _create_promise()
         waiters_q_elem = (elem, waiter_promise)
         self._write_waiters_q.append(waiters_q_elem)
 

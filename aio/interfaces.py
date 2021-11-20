@@ -9,15 +9,17 @@ from typing import (
     Callable,
     ContextManager,
     Mapping,
-    Optional,
     Protocol,
     TypeVar,
+    ParamSpec,
+    Coroutine,
 )
 
 if TYPE_CHECKING:
-    from aio.future import Coroutine
+    from aio.future import Future
 
 T = TypeVar('T')
+CPS = ParamSpec("CPS")
 CallbackType = Callable[..., None]
 
 
@@ -30,22 +32,18 @@ class Clock(Protocol):
 
 
 class EventCallback(Protocol):
-    def __call__(self, fd: int, events: int) -> None:
+    def __call__(self, fd: int, events: int, /) -> None:
         raise NotImplementedError
 
 
 class EventSelector(Protocol):
-    def select(
-        self, time_: Optional[float]
-    ) -> list[tuple[EventCallback, int, int]]:
+    def select(self, time_: float | None) -> list[tuple[EventCallback, int, int]]:
         raise NotImplementedError
 
     def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
         raise NotImplementedError
 
-    def stop_watch(
-        self, fd: int, events: Optional[int], cb: Optional[EventCallback]
-    ) -> None:
+    def stop_watch(self, fd: int, events: int | None, cb: EventCallback | None) -> None:
         raise NotImplementedError
 
     def wakeup_thread_safe(self) -> None:
@@ -59,13 +57,13 @@ class UnhandledExceptionHandler(Protocol):
 
 @dataclasses.dataclass
 class Handle:
-    when: Optional[float]
+    when: float | None
     callback: CallbackType
-    args: tuple[Any] = ()
+    args: tuple[Any, ...] = ()
     cancelled: bool = False
     context: Mapping[str, Any] = dataclasses.field(default_factory=dict)
 
-    def cancel(self):
+    def cancel(self) -> None:
         self.cancelled = True
 
 
@@ -79,44 +77,44 @@ class LoopRunner(Protocol):
     def loop(self) -> EventLoop:
         raise NotImplementedError
 
-    def run_coroutine(self, coroutine: Coroutine[T]) -> T:
+    def run_coroutine(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
         raise NotImplementedError
 
 
 class EventLoop(Protocol):
     def call_soon(
         self,
-        target: CallbackType,
-        *args: Any,
-        context: Optional[Mapping[str, Any]] = None,
+        target: Callable[CPS, None],
+        *args: CPS.args,
+        context: Mapping[str, Any] | None = None,
     ) -> Handle:
         raise NotImplementedError
 
     def call_later(
         self,
         timeout: float,
-        target: CallbackType,
-        *args: Any,
-        context: Optional[Mapping[str, Any]] = None,
+        target: Callable[CPS, None],
+        *args: CPS.args,
+        context: Mapping[str, Any] | None = None,
     ) -> Handle:
         raise NotImplementedError
 
     def call_soon_thread_safe(
         self,
-        target: CallbackType,
-        *args: Any,
-        context: Optional[Mapping[str, Any]] = None,
+        target: Callable[CPS, None],
+        *args: CPS.args,
+        context: Mapping[str, Any] | None = None,
     ) -> Handle:
-        raise NotImplementedError
+        return self.call_soon(target, *args, context=context)
 
     def call_later_thread_safe(
         self,
         timeout: float,
-        target: CallbackType,
-        *args: Any,
-        context: Optional[Mapping[str, Any]] = None,
+        target: Callable[CPS, None],
+        *args: CPS.args,
+        context: Mapping[str, Any] | None = None,
     ) -> Handle:
-        raise NotImplementedError
+        return self.call_later(timeout, target, *args, context=context)
 
     @property
     def clock(self) -> Clock:
@@ -131,7 +129,7 @@ class EventLoop(Protocol):
 
 class Executor(Protocol):
     async def execute_sync_callable(
-        self, fn: Callable[..., T], /, *args: Any, **kwargs: Any
+        self, fn: Callable[CPS, T], /, *args: CPS.args, **kwargs: CPS.kwargs
     ) -> T:
         raise NotImplementedError
 
@@ -165,9 +163,7 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_accept(
-        self, sock: socket.socket
-    ) -> tuple[socket.socket, Any]:
+    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, Any]:
         """
 
         :param sock:

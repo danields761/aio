@@ -33,9 +33,7 @@ def loop(loop_last_enqueued):
 
     loop = Mock(aio.EventLoop)
     loop.call_soon = call_soon
-    loop.call_later.side_effect = NotImplementedError(
-        '"call_later" is forbidden here'
-    )
+    loop.call_later.side_effect = NotImplementedError('"call_later" is forbidden here')
     return loop
 
 
@@ -46,9 +44,7 @@ def create_promise(loop):
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro, th=None: _create_task(
-        coro, label='test-task', _loop=loop
-    )
+    return lambda coro, th=None: _create_task(coro, label='test-task', _loop=loop)
 
 
 def finalize_coro(coro_inst: Coroutine):
@@ -86,9 +82,7 @@ class TestFuture:
         assert future.result == 'test result'
         assert future.exception is None
 
-    def test_get_result_after_exc(
-        self, create_promise, loop_call_last_enqueued
-    ):
+    def test_get_result_after_exc(self, create_promise, loop_call_last_enqueued):
         test_err = Exception('test exception description')
 
         promise = create_promise()
@@ -107,9 +101,7 @@ class TestFuture:
             _ = future.result
         assert exc_info.value is test_err
 
-    def test_on_done_cbs_set_res(
-        self, create_promise, loop_call_last_enqueued
-    ):
+    def test_on_done_cbs_set_res(self, create_promise, loop_call_last_enqueued):
         cb = Mock()
         promise = create_promise()
         future = promise.future
@@ -122,9 +114,7 @@ class TestFuture:
         assert future.is_finished()
         assert future.result == 'test result'
 
-    def test_on_done_cbs_set_exc(
-        self, create_promise, loop_call_last_enqueued
-    ):
+    def test_on_done_cbs_set_exc(self, create_promise, loop_call_last_enqueued):
         test_err = Exception('test exception description')
 
         cb = Mock()
@@ -152,9 +142,7 @@ class TestFuture:
         assert future.is_finished()
         assert isinstance(future.exception, aio.Cancelled)
 
-    def test_finished_state_in_res_cb(
-        self, create_promise, loop_call_last_enqueued
-    ):
+    def test_finished_state_in_res_cb(self, create_promise, loop_call_last_enqueued):
         promise = create_promise()
         future = promise.future
 
@@ -172,9 +160,7 @@ class TestFuture:
 
         assert cb.mock_calls == [call(future)]
 
-    def test_cant_add_same_cb_twice(
-        self, create_promise, loop_call_last_enqueued
-    ):
+    def test_cant_add_same_cb_twice(self, create_promise, loop_call_last_enqueued):
         cb = Mock()
 
         promise = create_promise()
@@ -314,9 +300,7 @@ class TestTask:
         task._cancel('Test end clean-up')
         finalize_coro(coro_inst)
 
-    def test_single_step_coro(
-        self, create_task, loop_call_last_enqueued, loop_last_enqueued
-    ):
+    def test_single_step_coro(self, create_task, loop_call_last_enqueued, loop_last_enqueued):
         task_result = Mock(name='coro-result')
 
         async def coro():
@@ -329,9 +313,7 @@ class TestTask:
         assert task.is_finished()
         assert task.result is task_result
 
-    def test_single_step_coro_raises_exc(
-        self, create_task, loop_call_last_enqueued
-    ):
+    def test_single_step_coro_raises_exc(self, create_task, loop_call_last_enqueued):
         task_exc = Exception('special exception')
 
         async def coro():
@@ -381,9 +363,7 @@ class TestTask:
         assert task.is_finished()
         assert task.exception is exc_inst
 
-    def test_task_two_steps(
-        self, create_promise, create_task, loop_call_last_enqueued
-    ):
+    def test_task_two_steps(self, create_promise, create_task, loop_call_last_enqueued):
         future_result0 = Mock(name='future-result-0')
         future_result1 = Mock(name='future-result-1')
 
@@ -486,9 +466,7 @@ class TestTask:
         assert task.is_cancelled()
         assert should_never_be_called.mock_calls == []
 
-    def test_current_task_accessible_from_coro(
-        self, create_task, loop_call_last_enqueued
-    ):
+    def test_current_task_accessible_from_coro(self, create_task, loop_call_last_enqueued):
         should_be_called = Mock(name='should_be_called')
 
         async def coro():
