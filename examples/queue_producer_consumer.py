@@ -6,13 +6,13 @@ async def provider(q: aio.Queue[int]) -> None:
         await q.put(i)
         await aio.sleep(0.1)
     q.close()
-    print('provider done')
+    print("provider done")
 
 
 async def consumer(q: aio.Queue[int]) -> None:
     async for elem in q:
-        print('consumed', elem)
-    print('consumer done')
+        print("consumed", elem)
+    print("consumer done")
 
 
 async def main() -> None:
@@ -21,7 +21,7 @@ async def main() -> None:
         tg.spawn(provider(q))
         tg.spawn(consumer(q))
 
-    print('main done')
+    print("main done")
 
 
 aio.run_loop(main())

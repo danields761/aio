@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from aio.future import Future
 
-T = TypeVar('T')
+T = TypeVar("T")
 CPS = ParamSpec("CPS")
 CallbackType = Callable[..., None]
 

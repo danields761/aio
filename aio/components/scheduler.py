@@ -6,7 +6,7 @@ from collections import deque
 
 from aio.interfaces import Handle
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class HasLowerEq(Protocol):
@@ -14,7 +14,7 @@ class HasLowerEq(Protocol):
         raise NotImplementedError
 
 
-P = TypeVar('P', bound=HasLowerEq)
+P = TypeVar("P", bound=HasLowerEq)
 
 
 class MinPriority:
@@ -41,7 +41,7 @@ class PriorityQueue(Generic[T, P]):
         priority = self._priority_fn(item)
         if priority is MIN_PRIORITY_SENTINEL:
             raise ValueError(
-                'Could not wrap item for priority queue ' 'due to it is have maximum priority'
+                "Could not wrap item for priority queue due to it is have maximum priority"
             )
         assert not isinstance(priority, MinPriority)
         return priority, next(self._ids_generator), item
@@ -82,8 +82,8 @@ class Scheduler(PriorityQueue[Handle, float]):
     def __init__(self, pending: Iterable[Handle] = (), enqueued: Iterable[Handle] = ()) -> None:
         if any(handle.when is not None for handle in pending):
             raise ValueError(
-                'Scheduler receives pending handles and '
-                'some of them have `when` attr which is not None'
+                "Scheduler receives pending handles and "
+                "some of them have `when` attr which is not None"
             )
         super().__init__(_handle_priority_getter, pending, enqueued)
 

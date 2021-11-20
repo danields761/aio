@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import AsyncIterable, AsyncIterator, Iterable, Tuple, TypeVar
+
+from collections import deque
 
 from aio.future import Promise, _create_promise
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class QueueBaseError(Exception):
@@ -125,7 +126,7 @@ class Queue(AsyncIterable[T]):
 
     def close(self) -> None:
         if self._closed:
-            raise RuntimeError('Queue already being closed')
+            raise RuntimeError("Queue already being closed")
         self._closed = True
         for _, write_promise in self._write_waiters_q:
             write_promise.set_exception(QueueClosed())

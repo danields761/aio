@@ -1,13 +1,13 @@
 import contextvars
 from unittest.mock import Mock
 
-test_cv = contextvars.ContextVar('test-cv')
+test_cv = contextvars.ContextVar("test-cv")
 
 
 class TestContextVars:
     def test_can_set_cv_on_context(self):
-        outer_value = Mock(name='outer-value')
-        inner_value = Mock(name='outer-value')
+        outer_value = Mock(name="outer-value")
+        inner_value = Mock(name="outer-value")
 
         def run_within_context():
             test_cv.set(inner_value)

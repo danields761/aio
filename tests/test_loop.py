@@ -19,12 +19,12 @@ def process_callback_exception(exc, **__) -> None:
     import traceback
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)
-    pytest.fail('No unhandled exceptions is allowed inside callbacks during testing')
+    pytest.fail("No unhandled exceptions is allowed inside callbacks during testing")
 
 
 @pytest.fixture
 def clock():
-    clock = MagicMock(Clock, name='clock')
+    clock = MagicMock(Clock, name="clock")
     clock.now.return_value = 50.0
     clock.resolution.return_value = 0.1
     return clock
@@ -32,7 +32,7 @@ def clock():
 
 @pytest.fixture
 def selector(clock):
-    selector = Mock(name='selector')
+    selector = Mock(name="selector")
 
     def selector_select(time_):
         if time_ is None:
@@ -49,7 +49,7 @@ class TestLoopStepping:
     def make_loop(self, selector, clock):
         return lambda scheduler: BaseEventLoop(
             selector,
-            networking_factory=Mock(side_effect=Exception('Not exists.')),
+            networking_factory=Mock(side_effect=Exception("Not exists.")),
             clock=clock,
             scheduler=scheduler,
             exception_handler=process_callback_exception,
@@ -127,12 +127,12 @@ class TestLoopStepping:
         assert parent_cb.mock_calls == []
         assert clock.now() == 55.0
 
-    @pytest.mark.parametrize('same_time_events_count', [2, 3, 4, 5])
+    @pytest.mark.parametrize("same_time_events_count", [2, 3, 4, 5])
     def test_runs_only_expired_cbs_have_same_time_events(
         self, clock, selector, make_loop, same_time_events_count
     ):
         parent_cb = Mock()
-        cbs = [getattr(parent_cb, f'cb{i}') for i in range(same_time_events_count)]
+        cbs = [getattr(parent_cb, f"cb{i}") for i in range(same_time_events_count)]
         last_cb = parent_cb.cb2
         scheduler = Scheduler([], [Handle(55.0, cb) for cb in cbs] + [Handle(60.0, last_cb)])
 
@@ -140,7 +140,7 @@ class TestLoopStepping:
 
         assert scheduler.get_items() == [Handle(60.0, last_cb)]
         assert parent_cb.mock_calls == [
-            getattr(call, f'cb{i}')() for i in range(same_time_events_count)
+            getattr(call, f"cb{i}")() for i in range(same_time_events_count)
         ]
         assert selector.mock_calls == [call.select(5.0)]
         assert clock.now() == 55.0
@@ -220,7 +220,7 @@ class TestLoopStepping:
         assert selector.mock_calls == [call.select(0)]
         assert clock.now() == 50
 
-    @pytest.mark.parametrize('now', [0.0, 15.0])
+    @pytest.mark.parametrize("now", [0.0, 15.0])
     def test_executes_handle_eagerly_if_time_less_clock_resolution(
         self, selector, clock, make_loop, now
     ):
@@ -263,8 +263,8 @@ class TestLoopStepping:
         assert sorted(parent_cb.mock_calls) == sorted([call.rcb0(), call.rcb1(), call.scb0()])
 
     def test_enqueue_pending_during_select(self, selector, clock, make_loop):
-        first_cb = Mock(name='first-cb')
-        enqueued_cb = Mock(name='enqueued-cb')
+        first_cb = Mock(name="first-cb")
+        enqueued_cb = Mock(name="enqueued-cb")
 
         scheduler = Scheduler(enqueued=[Handle(55.0, first_cb)])
         loop = make_loop(scheduler)
@@ -282,8 +282,8 @@ class TestLoopStepping:
         assert scheduler.get_items() == []
 
     def test_enqueue_later_during_select(self, selector, clock, make_loop):
-        first_cb = Mock(name='first-cb')
-        enqueued_cb = Mock(name='enqueued-cb')
+        first_cb = Mock(name="first-cb")
+        enqueued_cb = Mock(name="enqueued-cb")
 
         scheduler = Scheduler(enqueued=[Handle(55.0, first_cb)])
         loop = make_loop(scheduler)
@@ -301,8 +301,8 @@ class TestLoopStepping:
         assert scheduler.get_items() == []
 
     def test_enqueue_much_later_during_select(self, selector, clock, make_loop):
-        first_cb = Mock(name='first-cb')
-        enqueued_cb = Mock(name='enqueued-cb')
+        first_cb = Mock(name="first-cb")
+        enqueued_cb = Mock(name="enqueued-cb")
         enqueued_handle = Handle(100, enqueued_cb)
 
         scheduler = Scheduler(enqueued=[Handle(55.0, first_cb)])
@@ -357,7 +357,7 @@ class TestLoopStepping:
 class TestLoopRunner:
     @pytest.fixture
     def runner(self, clock, selector):
-        loop = BaseEventLoop(selector, Mock(side_effect=Exception('Not exists.')), clock=clock)
+        loop = BaseEventLoop(selector, Mock(side_effect=Exception("Not exists.")), clock=clock)
         runner = BaseLoopRunner(loop, selector)
         return runner
 
@@ -376,7 +376,7 @@ class TestLoopRunner:
         assert should_be_called.mock_calls == [call()]
 
     def test_returns_coroutine_result(self, runner):
-        result = Mock(name='result')
+        result = Mock(name="result")
 
         async def root():
             return result
@@ -385,9 +385,9 @@ class TestLoopRunner:
 
     def test_propagates_coroutine_exception(self, runner):
         async def root():
-            raise Exception('Some exception')
+            raise Exception("Some exception")
 
-        with pytest.raises(Exception, match='Some exception'):
+        with pytest.raises(Exception, match="Some exception"):
             runner.run_coroutine(root())
 
     def test_runs_multi_suspend_coroutine(self, loop, runner, clock):
@@ -445,7 +445,7 @@ class TestLoopRunner:
         assert should_be_called_in_root.mock_calls == [call()]
         assert should_be_called_in_gen.mock_calls == [call()]
         assert any(
-            'Async-generator shutdown request income for' in warn.message.args[0]
+            "Async-generator shutdown request income for" in warn.message.args[0]
             and warn.filename == __file__
             for warn in warn_info.list
         )

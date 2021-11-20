@@ -9,7 +9,6 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
-    Literal,
     Type,
 )
 from weakref import WeakSet
@@ -20,10 +19,10 @@ if TYPE_CHECKING:
 
 def _emit_undone_async_gen_warn(async_gen: AsyncGenerator[Any, Any], stack_level: int = 0) -> None:
     warnings.warn(
-        f'Async-generator shutdown request income for `{async_gen}`, but this '
-        'event loop doesn\'t supports such behaviour. '
-        'Please, consider either close async-generator manually via `aclose` method '
-        'or use `aio.guard_async_gen` context manager instead.',
+        f"Async-generator shutdown request income for `{async_gen}`, but this "
+        "event loop doesn't supports such behaviour. "
+        "Please, consider either close async-generator manually via `aclose` method "
+        "or use `aio.guard_async_gen` context manager instead.",
         stacklevel=stack_level + 2,
     )
 
@@ -99,7 +98,7 @@ class MeasureElapsed:
 
     def get_elapsed(self) -> float:
         if self._last_enter_at is None:
-            raise RuntimeError('Measure not started')
+            raise RuntimeError("Measure not started")
         return self._clock.now() - self._last_enter_at
 
     def __enter__(self) -> MeasureElapsed:

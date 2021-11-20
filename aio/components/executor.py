@@ -1,16 +1,17 @@
 import threading
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Callable, TypeVar, ParamSpec
+
 from concurrent.futures import Executor as _Executor
 from concurrent.futures import Future as _Future
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, TypeVar, ParamSpec
 
 from aio.exceptions import Cancelled, FutureFinishedError
 from aio.funcs import get_loop
 from aio.future import Promise, _create_promise
 from aio.interfaces import EventSelector, Executor
 
-T = TypeVar('T')
+T = TypeVar("T")
 CPS = ParamSpec("CPS")
 
 
@@ -28,7 +29,7 @@ async def _stupid_execute_on_thread(
 ) -> None:
     loop = await get_loop()
 
-    waiter: Promise[None] = _create_promise('thread-waiter')
+    waiter: Promise[None] = _create_promise("thread-waiter")
 
     def thread_fn() -> None:
         try:
@@ -36,7 +37,7 @@ async def _stupid_execute_on_thread(
         except Exception as exc:
             loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.set_exception, exc)
         except BaseException as exc:
-            new_exc = RuntimeError('Callable raises BaseException subclass')
+            new_exc = RuntimeError("Callable raises BaseException subclass")
             new_exc.__cause__ = exc
             loop.call_soon_thread_safe(
                 _ignore_feature_finished_error, waiter.set_exception, new_exc
@@ -60,7 +61,7 @@ class ConcurrentExecutor(Executor):
     ) -> T:
         loop = await get_loop()
         cfuture = self._executor.submit(fn, args)
-        waiter: Promise[T] = _create_promise(label='executor-waiter')
+        waiter: Promise[T] = _create_promise(label="executor-waiter")
 
         def on_result_from_executor(_: _Future[T]) -> None:
             assert cfuture.done()
@@ -69,7 +70,7 @@ class ConcurrentExecutor(Executor):
                 loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.cancel)
             elif exc := cfuture.exception():
                 if not isinstance(exc, Exception):
-                    new_exc = RuntimeError('Callable raises `BaseException` subclass')
+                    new_exc = RuntimeError("Callable raises `BaseException` subclass")
                     new_exc.__cause__ = exc
                     exc = new_exc
 
@@ -95,7 +96,7 @@ class ConcurrentExecutor(Executor):
 async def _close_std_executor(executor: _Executor) -> None:
     await _stupid_execute_on_thread(
         executor.shutdown,
-        'executor-shutdowner',
+        "executor-shutdowner",
         wait=True,
         cancel_futures=True,
     )
@@ -105,7 +106,7 @@ async def _close_std_executor(executor: _Executor) -> None:
 async def concurrent_executor_factory(
     selector: EventSelector, override_executor: _Executor | None = None
 ) -> AsyncIterator[Executor]:
-    std_executor = override_executor or ThreadPoolExecutor(thread_name_prefix='loop-executor')
+    std_executor = override_executor or ThreadPoolExecutor(thread_name_prefix="loop-executor")
     executor = ConcurrentExecutor(selector, std_executor)
     try:
         yield executor

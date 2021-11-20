@@ -15,7 +15,7 @@ def guard_futures_cleanup():
         orig_init(fut, *args, **kwargs)
         futures.append(fut)
 
-    with patch.object(aio.future.Future, '__init__', future_init):
+    with patch.object(aio.future.Future, "__init__", future_init):
         yield futures
 
     for future in futures:

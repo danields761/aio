@@ -5,7 +5,7 @@ from typing import Any, TypeVar, Coroutine
 from aio.future import Future
 from aio.loop import get_loop_runner_factory
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def run_loop(

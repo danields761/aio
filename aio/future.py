@@ -5,7 +5,6 @@ import inspect
 import warnings
 from enum import IntEnum
 from typing import (
-    TYPE_CHECKING,
     Any,
     Generic,
     Mapping,
@@ -23,7 +22,7 @@ from aio.loop import _get_running_loop
 # if TYPE_CHECKING:
 #     from aio.types import Coroutine
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class FutureResultCallback(Protocol[T]):
@@ -56,8 +55,8 @@ class _FuturePromise(Promise[T]):
     def set_exception(self, exc: Exception) -> None:
         if isinstance(exc, Cancelled):
             raise ValueError(
-                f'Use cancellation API instead of passing exception '
-                f'`{Cancelled.__module__}.{Cancelled.__qualname__}` manually'
+                f"Use cancellation API instead of passing exception "
+                f"`{Cancelled.__module__}.{Cancelled.__qualname__}` manually"
             )
         self._fut._set_result(exc=exc)
 
@@ -89,8 +88,8 @@ class Future(Generic[T]):
         self._exc: Exception | _NotSet = _not_set
         self._label = label
         self._context: Mapping[str, Any] = {
-            'future': self,
-            'future_label': label,
+            "future": self,
+            "future_label": label,
             **context,
         }
 
@@ -144,20 +143,20 @@ class Future(Generic[T]):
 
     def is_finished(self) -> bool:
         finished = self._value is not _not_set or self._exc is not _not_set
-        assert not finished or self._state == Future.State.finished, 'Future has inconsistent state'
+        assert not finished or self._state == Future.State.finished, "Future has inconsistent state"
         return finished
 
     def is_cancelled(self) -> bool:
         return self.is_finished() and isinstance(self._exc, Cancelled)
 
     def _call_callbacks(self) -> None:
-        assert self.is_finished(), 'Future must finish before calling callbacks'
+        assert self.is_finished(), "Future must finish before calling callbacks"
 
         for cb in self._result_callbacks:
             self._schedule_callback(cb)
 
     def _schedule_callback(self, cb: FutureResultCallback[T]) -> None:
-        assert self.is_finished(), 'Future must finish before scheduling callbacks'
+        assert self.is_finished(), "Future must finish before scheduling callbacks"
 
         self._loop.call_soon(cb, self, context=self._context)
 
@@ -183,19 +182,19 @@ class Future(Generic[T]):
             yield self
 
         if not self.is_finished():
-            raise FutureNotReady('The future object resumed before result has been set')
+            raise FutureNotReady("The future object resumed before result has been set")
 
         if self._exception:
             raise self._exception
 
         assert not isinstance(
             self._value, _NotSet
-        ), 'Value and exception mutually exclusive when `is_finished` returns True'
+        ), "Value and exception mutually exclusive when `is_finished` returns True"
         return self._value
 
     def __repr__(self) -> str:
-        label = self._label if self._label else ''
-        return f'<Future label={label} state={self._state.name} at {hex(id(self))}>'
+        label = self._label if self._label else ""
+        return f"<Future label={label} state={self._state.name} at {hex(id(self))}>"
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, type(self)):
@@ -206,15 +205,15 @@ class Future(Generic[T]):
         if not self.is_finished():
             warnings.warn(
                 (
-                    f'Feature `{self}` is about to be destroyed, '
-                    f'but not finished, that normally should never occur '
-                    f'(feature context `{self._context}`)'
+                    f"Feature `{self}` is about to be destroyed, "
+                    f"but not finished, that normally should never occur "
+                    f"(feature context `{self._context}`)"
                 ),
                 stacklevel=2,
             )
 
 
-_current_task: contextvars.ContextVar[Task[Any]] = contextvars.ContextVar('current-task')
+_current_task: contextvars.ContextVar[Task[Any]] = contextvars.ContextVar("current-task")
 
 
 class Task(Future[T]):
@@ -222,7 +221,7 @@ class Task(Future[T]):
         self, coroutine: Coroutine[Future[Any], None, T], loop: EventLoop, label: str | None = None
     ) -> None:
         if not inspect.iscoroutine(coroutine):
-            raise TypeError(f'Coroutine object is expected, not `{coroutine}`')
+            raise TypeError(f"Coroutine object is expected, not `{coroutine}`")
 
         super().__init__(loop, label, task=self, future=None)
         self._coroutine = coroutine
@@ -230,7 +229,7 @@ class Task(Future[T]):
         self._pending_cancellation = False
         self._state = Future.State.created
         self._started_promise: Promise[None] = _create_promise(
-            f'task-started-future', _loop=loop, served_task=self
+            f"task-started-future", _loop=loop, served_task=self
         )
 
     def _cancel(self, msg: str | None = None) -> None:
@@ -269,8 +268,8 @@ class Task(Future[T]):
 
         if future is self:
             raise RuntimeError(
-                'Task awaiting on itself, this will cause '
-                'infinity awaiting that\'s why is forbidden'
+                "Task awaiting on itself, this will cause "
+                "infinity awaiting that's why is forbidden"
             )
 
         if self._waiting_on:
@@ -281,7 +280,7 @@ class Task(Future[T]):
             raise RuntimeError(
                 f'During processing task "{self!r}" another '
                 f'task has been "{future!r}" received, which '
-                f'does not belong to the same loop'
+                f"does not belong to the same loop"
             )
 
         future.add_callback(self._schedule_execution)
@@ -301,11 +300,11 @@ class Task(Future[T]):
 
     def __repr__(self) -> str:
         return (
-            '<Task '
-            f'label={self._label} '
-            f'state={self._state.name} '
-            f'for {self._coroutine!r}'
-            '>'
+            "<Task "
+            f"label={self._label} "
+            f"state={self._state.name} "
+            f"for {self._coroutine!r}"
+            ">"
         )
 
 

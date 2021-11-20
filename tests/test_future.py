@@ -39,12 +39,12 @@ def loop(loop_last_enqueued):
 
 @pytest.fixture
 def create_promise(loop):
-    return lambda th=None: _create_promise(th or 'test-future', _loop=loop)
+    return lambda th=None: _create_promise(th or "test-future", _loop=loop)
 
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro, th=None: _create_task(coro, label='test-task', _loop=loop)
+    return lambda coro, th=None: _create_task(coro, label="test-task", _loop=loop)
 
 
 def finalize_coro(coro_inst: Coroutine):
@@ -74,16 +74,16 @@ class TestFuture:
         with pytest.raises(aio.FutureNotReady):
             _ = future.exception
 
-        promise.set_result('test result')
+        promise.set_result("test result")
         loop_call_last_enqueued()
 
         assert future.state == aio.Future.State.finished
         assert future.is_finished()
-        assert future.result == 'test result'
+        assert future.result == "test result"
         assert future.exception is None
 
     def test_get_result_after_exc(self, create_promise, loop_call_last_enqueued):
-        test_err = Exception('test exception description')
+        test_err = Exception("test exception description")
 
         promise = create_promise()
         future = promise.future
@@ -107,15 +107,15 @@ class TestFuture:
         future = promise.future
         future.add_callback(cb)
 
-        promise.set_result('test result')
+        promise.set_result("test result")
         loop_call_last_enqueued()
 
         assert cb.mock_calls == [call(future)]
         assert future.is_finished()
-        assert future.result == 'test result'
+        assert future.result == "test result"
 
     def test_on_done_cbs_set_exc(self, create_promise, loop_call_last_enqueued):
-        test_err = Exception('test exception description')
+        test_err = Exception("test exception description")
 
         cb = Mock()
         promise = create_promise()
@@ -149,13 +149,13 @@ class TestFuture:
         def cb_callable(res_fut):
             assert res_fut is future
             assert res_fut.state == aio.Future.State.finished
-            assert res_fut.result == 'test result'
+            assert res_fut.result == "test result"
             assert res_fut.exception is None
 
         cb = Mock(wraps=cb_callable)
 
         future.add_callback(cb)
-        promise.set_result('test result')
+        promise.set_result("test result")
         loop_call_last_enqueued()
 
         assert cb.mock_calls == [call(future)]
@@ -168,13 +168,13 @@ class TestFuture:
         future.add_callback(cb)
         future.add_callback(cb)
 
-        promise.set_result('test result')
+        promise.set_result("test result")
         loop_call_last_enqueued()
 
         assert cb.mock_calls == [call(future)]
 
     def test_coro_awaits(self, create_promise, loop_call_last_enqueued):
-        result_mock = Mock(name='result')
+        result_mock = Mock(name="result")
         promise = create_promise()
         future = promise.future
 
@@ -194,7 +194,7 @@ class TestFuture:
     def test_coro_cant_await_same_future_twice(self, create_promise):
         promise = create_promise()
         future = promise.future
-        should_never_be_called = Mock(name='should_never_be_called')
+        should_never_be_called = Mock(name="should_never_be_called")
 
         async def coro():
             await future
@@ -204,7 +204,7 @@ class TestFuture:
         assert coro_inst.send(None) is future
         with pytest.raises(
             aio.FutureNotReady,
-            match='The future object resumed before result has been set',
+            match="The future object resumed before result has been set",
         ):
             coro_inst.send(None)
 
@@ -217,7 +217,7 @@ class TestFuture:
     def test_coro_raises_exception_being_set(self, create_promise):
         promise = create_promise()
         future = promise.future
-        should_never_be_called = Mock(name='should_never_be_called')
+        should_never_be_called = Mock(name="should_never_be_called")
 
         async def coro():
             await future
@@ -235,7 +235,7 @@ class TestFuture:
         assert should_never_be_called.mock_calls == []
 
     def test_multiple_awaiters(self, create_promise):
-        future_result = Mock(name='future_result')
+        future_result = Mock(name="future_result")
         promise = create_promise()
         future = promise.future
 
@@ -254,7 +254,7 @@ class TestFuture:
             assert exc_info.value.value is future_result
 
     def test_await_completed_future(self, create_promise):
-        future_result = Mock(name='future-result')
+        future_result = Mock(name="future-result")
         promise = create_promise()
         future = promise.future
         promise.set_result(future_result)
@@ -269,7 +269,7 @@ class TestFuture:
         assert exc_info.value.value is future_result
 
     def test_await_completed_future_with_exc(self, create_promise):
-        should_never_be_called = Mock(name='should_never_be_called')
+        should_never_be_called = Mock(name="should_never_be_called")
         future_exc = SpecialExc()
         promise = create_promise()
         future = promise.future
@@ -293,15 +293,15 @@ class TestTask:
             pass
 
         coro_inst = coro()
-        task = aio.Task(coro_inst, Mock(name='loop'))
+        task = aio.Task(coro_inst, Mock(name="loop"))
         assert not task.is_finished()
         assert task.state == aio.Future.State.created
 
-        task._cancel('Test end clean-up')
+        task._cancel("Test end clean-up")
         finalize_coro(coro_inst)
 
     def test_single_step_coro(self, create_task, loop_call_last_enqueued, loop_last_enqueued):
-        task_result = Mock(name='coro-result')
+        task_result = Mock(name="coro-result")
 
         async def coro():
             return task_result
@@ -314,7 +314,7 @@ class TestTask:
         assert task.result is task_result
 
     def test_single_step_coro_raises_exc(self, create_task, loop_call_last_enqueued):
-        task_exc = Exception('special exception')
+        task_exc = Exception("special exception")
 
         async def coro():
             raise task_exc
@@ -330,7 +330,7 @@ class TestTask:
     ):
         promise = create_promise()
         future = promise.future
-        future_result = Mock(name='future_result')
+        future_result = Mock(name="future_result")
 
         async def coro():
             return await future
@@ -364,8 +364,8 @@ class TestTask:
         assert task.exception is exc_inst
 
     def test_task_two_steps(self, create_promise, create_task, loop_call_last_enqueued):
-        future_result0 = Mock(name='future-result-0')
-        future_result1 = Mock(name='future-result-1')
+        future_result0 = Mock(name="future-result-0")
+        future_result1 = Mock(name="future-result-1")
 
         promise0 = create_promise()
         promise1 = create_promise()
@@ -391,8 +391,8 @@ class TestTask:
     def test_task_two_steps_first_raises_second_returns(
         self, create_promise, create_task, loop_call_last_enqueued
     ):
-        future_exc0 = SpecialExc('future 0 exc')
-        future_result1 = Mock(name='future_result1')
+        future_exc0 = SpecialExc("future 0 exc")
+        future_result1 = Mock(name="future_result1")
 
         promise0 = create_promise()
         promise1 = create_promise()
@@ -403,7 +403,7 @@ class TestTask:
             except SpecialExc as err:
                 r0 = err
             else:
-                raise Exception('should never occurs')
+                raise Exception("should never occurs")
 
             r1 = await promise1.future
             return r0, r1
@@ -422,13 +422,13 @@ class TestTask:
         assert task.result == (future_exc0, future_result1)
 
     def test_cancel_do_not_await_inner_coro(self, loop_call_last_enqueued):
-        should_never_be_called = Mock(name='should_never_be_called')
+        should_never_be_called = Mock(name="should_never_be_called")
 
         async def coro():
             should_never_be_called()
 
         coro_inst = coro()
-        task = aio.Task(coro_inst, Mock(name='loop'))
+        task = aio.Task(coro_inst, Mock(name="loop"))
         task._cancel()
 
         assert should_never_be_called.mock_calls == []
@@ -438,9 +438,9 @@ class TestTask:
     def test_cancel_also_cancels_inner_future(
         self, create_promise, create_task, loop_call_last_enqueued
     ):
-        inner_future_cb = Mock(name='inner_future_cb')
-        should_be_called = Mock(name='should_be_called')
-        should_never_be_called = Mock(name='should_never_be_called')
+        inner_future_cb = Mock(name="inner_future_cb")
+        should_be_called = Mock(name="should_be_called")
+        should_never_be_called = Mock(name="should_never_be_called")
 
         inner_promise = create_promise()
         inner_future = inner_promise.future
@@ -467,7 +467,7 @@ class TestTask:
         assert should_never_be_called.mock_calls == []
 
     def test_current_task_accessible_from_coro(self, create_task, loop_call_last_enqueued):
-        should_be_called = Mock(name='should_be_called')
+        should_be_called = Mock(name="should_be_called")
 
         async def coro():
             should_be_called()
@@ -481,7 +481,7 @@ class TestTask:
     def test_current_task_accessible_from_coro_multiple_tasks(
         self, create_task, loop_call_last_enqueued
     ):
-        should_be_called = Mock(name='should_be_called')
+        should_be_called = Mock(name="should_be_called")
 
         async def coro1():
             should_be_called()

@@ -8,7 +8,7 @@ from aio.funcs import shield
 from aio.future import Task, _create_task, Future
 from aio.gather import iter_done_futures
 
-T = TypeVar('T', covariant=True)
+T = TypeVar("T", covariant=True)
 
 
 class TaskGroup:
@@ -42,19 +42,19 @@ class TaskGroup:
                     pass
         except Cancelled:
             raise RuntimeError(
-                f'Task group `{self}` being cancelled while '
-                f'joining on child tasks, that should never happened!'
+                f"Task group `{self}` being cancelled while "
+                f"joining on child tasks, that should never happened!"
             )
 
-        assert all(task.is_finished() for task in tasks), 'All task must be finished here'
+        assert all(task.is_finished() for task in tasks), "All task must be finished here"
         task_exceptions = [task.exception for task in tasks if task.exception]
 
         if task_exceptions:
-            raise create_multi_error('Child task errors', *task_exceptions)
+            raise create_multi_error("Child task errors", *task_exceptions)
 
     def _check_not_finalized(self) -> None:
         if self._is_finalized:
-            raise RuntimeError('Spawning tasks inside task group after finalization is forbidden')
+            raise RuntimeError("Spawning tasks inside task group after finalization is forbidden")
 
 
 @asynccontextmanager
@@ -67,7 +67,7 @@ async def task_group() -> AsyncIterator[TaskGroup]:
         body_exc = exc
 
     if body_exc:
-        tg.cancel('Cancelling task group due to exception raised inside task group body')
+        tg.cancel("Cancelling task group due to exception raised inside task group body")
 
     join_task = _create_task(tg._join())
     try:
@@ -88,7 +88,7 @@ async def task_group() -> AsyncIterator[TaskGroup]:
         assert join_task.is_finished()
     except (MultiError, Cancelled) as exc:
         if body_exc:
-            raise create_multi_error('Body exception aborts children task', body_exc, exc)
+            raise create_multi_error("Body exception aborts children task", body_exc, exc)
         else:
             raise
 
