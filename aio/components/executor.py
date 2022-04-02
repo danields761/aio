@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 from aio.exceptions import Cancelled, FutureFinishedError
 from aio.funcs import get_loop
 from aio.future import Promise, _create_promise
-from aio.interfaces import IOSelector, Executor
+from aio.interfaces import Executor, IOSelector
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")

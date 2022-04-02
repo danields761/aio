@@ -17,7 +17,7 @@ from typing import (
 
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
 from aio.interfaces import EventLoop
-from aio.loop import _get_running_loop
+from aio.loop._priv import _get_running_loop
 
 T = TypeVar("T")
 

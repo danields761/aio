@@ -67,17 +67,8 @@ class Handle:
         self.cancelled = True
 
 
-class LoopRunnerFactory(Protocol):
-    def __call__(self, **kwargs: Any) -> ContextManager[LoopRunner]:
-        raise NotImplementedError
-
-
-class LoopRunner(Protocol):
-    @property
-    def loop(self) -> EventLoop:
-        raise NotImplementedError
-
-    def run_coroutine(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
+class LoopFactory(Protocol):
+    def __call__(self, **kwargs: Any) -> ContextManager[EventLoop]:
         raise NotImplementedError
 
 
@@ -124,6 +115,9 @@ class EventLoop(Protocol):
         raise NotImplementedError
 
     def create_executor(self) -> AsyncContextManager[Executor]:
+        raise NotImplementedError
+
+    def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
         raise NotImplementedError
 
 

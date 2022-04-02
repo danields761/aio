@@ -3,22 +3,11 @@ from typing import Any, AsyncGenerator, AsyncIterator, TypeVar
 
 from aio.exceptions import Cancelled
 from aio.future import Future, Promise, Task, _create_promise, _current_task
-from aio.loop import EventLoop, _running_loop
+from aio.loop import get_running as get_running_loop
 
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 T_contra = TypeVar("T_contra", contravariant=True)
-
-
-async def get_loop() -> EventLoop:
-    """Get event loop on which calling coroutine is running."""
-    try:
-        return _running_loop.get()
-    except LookupError:
-        raise RuntimeError(
-            "Current loop isn't accessible from current coroutine, "
-            "probably it being run on non-`aio` event loop instance"
-        )
 
 
 async def get_current_task() -> Task[Any]:
@@ -49,7 +38,7 @@ def shield(future: Future[T]) -> Future[T]:
 
 
 async def sleep(sec: float) -> None:
-    loop = await get_loop()
+    loop = await get_running_loop()
 
     sleep_promise: Promise[None] = _create_promise()
     handle = loop.call_later(sec, sleep_promise.set_result, None)

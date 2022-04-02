@@ -1,4 +1,3 @@
-from aio.entry import run_loop
 from aio.exceptions import (
     Cancelled,
     CancelMultiError,
@@ -9,22 +8,23 @@ from aio.exceptions import (
     NetworkingError,
     SocketConfigurationError,
 )
-from aio.funcs import get_current_task, get_loop, guard_async_gen, sleep
+from aio.funcs import get_current_task, guard_async_gen, sleep
 from aio.future import Future, FutureResultCallback, Task
 from aio.gather import iter_done_futures
 from aio.interfaces import (
     EventLoop,
-    IOSelector,
-    IOEventCallback,
     Executor,
     Handle,
+    IOEventCallback,
+    IOSelector,
     Networking,
 )
+from aio.loop.entry import run
 from aio.queue import Queue
 from aio.task_group import task_group
 
 __all__ = [
-    "run_loop",
+    "run",
     "Cancelled",
     "CancelMultiError",
     "FutureError",
@@ -34,7 +34,6 @@ __all__ = [
     "NetworkingError",
     "SocketConfigurationError",
     "get_current_task",
-    "get_loop",
     "guard_async_gen",
     "sleep",
     "Future",

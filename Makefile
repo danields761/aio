@@ -4,11 +4,14 @@ SERVICE_NAME := aio
 PYTHON ?= .venv/bin/python
 PDM ?= pdm
 
+mkfile_path := $(abspath $(lastword $(MAKEFILE_LIST)))
+current_dir := $(notdir $(patsubst %/,%,$(dir $(mkfile_path))))
+
 setup:
 	$(PDM) plugin add pdm-venv
 	$(PDM) config venv.in_project true
 	$(PDM) venv create
-	$(PDM) venv activate in-project
+	$(PDM) use -f
 	$(PDM) install
 
 lint:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextvars
 import os
 import signal
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from functools import partial
 from itertools import count
 from typing import (
@@ -12,7 +12,6 @@ from typing import (
     AsyncIterator,
     Callable,
     ContextManager,
-    Iterator,
     Mapping,
     ParamSpec,
     TypeVar,
@@ -21,10 +20,6 @@ from typing import (
 import structlog
 
 from aio.components.clock import MonotonicClock
-from aio.components.networking import (
-    create_selector_networking,
-    create_selectors_event_selector,
-)
 from aio.components.scheduler import Scheduler
 from aio.exceptions import KeyboardCanceled
 from aio.interfaces import (
@@ -32,16 +27,11 @@ from aio.interfaces import (
     EventLoop,
     Handle,
     IOSelector,
-    LoopRunner,
-    LoopRunnerFactory,
     Networking,
     UnhandledExceptionHandler,
 )
-from aio.utils import (
-    MeasureElapsed,
-    SignalHandlerInstaller,
-    WarnUndoneAsyncGens,
-)
+from aio.loop._priv import _running_loop
+from aio.utils import MeasureElapsed, SignalHandlerInstaller
 
 if TYPE_CHECKING:
     from aio.future import Coroutine, Future, Task
@@ -94,14 +84,6 @@ def _report_loop_callback_error(
 
 
 _LOOP_DEBUG = bool(os.environ.get("AIO_DEBUG", __debug__))
-_running_loop: contextvars.ContextVar[EventLoop] = contextvars.ContextVar("running-loop")
-
-
-def _get_running_loop() -> EventLoop:
-    try:
-        return _running_loop.get()
-    except LookupError:
-        raise RuntimeError("Should be called inside event loop")
 
 
 class BaseEventLoop(EventLoop):
@@ -177,16 +159,12 @@ class BaseEventLoop(EventLoop):
 
         # Invoke early callbacks
         if early_callbacks:
-            self._logger.debug(
-                "Invoking early callbacks",
-                callbacks_num=len(early_callbacks),
-            )
+            self._logger.debug("Invoking early callbacks", callbacks_num=len(early_callbacks))
             with measure_callbacks:
                 for handle in early_callbacks:
                     self._invoke_handle(cv_context, handle)
                 self._logger.debug(
-                    "Early callbacks invoked",
-                    elapsed=measure_callbacks.get_elapsed(),
+                    "Early callbacks invoked", elapsed=measure_callbacks.get_elapsed()
                 )
 
         # Invoke IO callbacks
@@ -314,40 +292,10 @@ class BaseEventLoop(EventLoop):
         self._scheduler.enqueue(handle)
         return handle
 
-
-class BaseLoopRunner(LoopRunner):
-    def __init__(
-        self,
-        loop: BaseEventLoop,
-        selector: IOSelector,
-        *,
-        logger: Logger | None = None,
-    ) -> None:
-        self._loop = loop
-        self._selector = selector
-
-        logger = logger or _log
-        self._logger = logger.bind(component="event-loop-runner", runner_id=id(self))
-
-    @property
-    def loop(self) -> EventLoop:
-        return self._loop
-
-    def run_coroutine(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
-        logger = self._logger.bind(root_coroutine=coroutine)
-        logger.info("Starting root coroutine")
-        try:
-            with WarnUndoneAsyncGens():
-                return self._run_until_complete(coroutine)
-            logger.info("Root coroutine finished")
-        except BaseException as exc:
-            logger.info("Root coroutine finished with an error", exc_info=exc)
-            raise
-
-    def _run_until_complete(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
+    def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
         from aio.future import _create_task
 
-        root_task = _create_task(coroutine, _loop=self._loop)
+        root_task = _create_task(coroutine, _loop=self)
         received_fut: Future[T] | None = None
 
         def receive_result(fut: Future[T]) -> None:
@@ -363,7 +311,7 @@ class BaseLoopRunner(LoopRunner):
         with SignalHandlerInstaller(signal.SIGINT, on_keyboard_interrupt):
             for _ in count():
                 try:
-                    self._loop.run_step()
+                    self.run_step()
                 except KeyboardCanceled:
                     raise
                 if received_fut:
@@ -372,37 +320,3 @@ class BaseLoopRunner(LoopRunner):
         assert root_task.is_finished
         assert received_fut is not None
         return received_fut.result()
-
-
-@contextmanager
-def _default_loop_runner_factory(
-    *,
-    selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
-    networking_factory: Callable[[], ContextManager[Networking]] | None = None,
-    logger: Logger | None = None,
-    **loop_kwargs: Any,
-) -> Iterator[LoopRunner]:
-    logger = logger or _log
-
-    if not selector_factory:
-        selector_factory = partial(create_selectors_event_selector, logger=logger)
-
-    with selector_factory() as selector:
-        if not networking_factory:
-            networking_factory = partial(create_selector_networking, selector, logger=logger)
-
-        loop = BaseEventLoop(selector, networking_factory, **loop_kwargs)
-        runner = BaseLoopRunner(loop, selector)
-        yield runner
-
-
-_loop_runner_factory: LoopRunnerFactory = _default_loop_runner_factory
-
-
-def set_loop_runner_factory(loop_factory: LoopRunnerFactory) -> None:
-    global _loop_runner_factory
-    _loop_runner_factory = loop_factory
-
-
-def get_loop_runner_factory() -> LoopRunnerFactory:
-    return _loop_runner_factory

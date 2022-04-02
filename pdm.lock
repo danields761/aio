@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "structlog"
-version = "20.2.0"
+version = "21.5.0"
 requires_python = ">=3.6"
 summary = "Structured Logging for Python"
 
@@ -221,7 +221,7 @@ summary = "Backported and Experimental Type Hints for Python 3.6+"
 
 [metadata]
 lock_version = "3.1"
-content_hash = "sha256:50df4f6677844a4a3926568ff7eb04bab0b1876624d4d4a5e6dff7cb8d5406c6"
+content_hash = "sha256:3b771eaaeb485d724978873570f1304d01a616f5a58828fb2db70e1ee4c011ae"
 
 [metadata.files]
 "atomicwrites 1.4.0" = [
@@ -373,9 +373,9 @@ content_hash = "sha256:50df4f6677844a4a3926568ff7eb04bab0b1876624d4d4a5e6dff7cb8
     {file = "rich-12.0.1-py3-none-any.whl", hash = "sha256:ce5c714e984a2d185399e4e1dd1f8b2feacb7cecfc576f1522425643a36a57ea"},
     {file = "rich-12.0.1.tar.gz", hash = "sha256:3fba9dd15ebe048e2795a02ac19baee79dc12cc50b074ef70f2958cd651b59a9"},
 ]
-"structlog 20.2.0" = [
-    {file = "structlog-20.2.0-py2.py3-none-any.whl", hash = "sha256:33dd6bd5f49355e52c1c61bb6a4f20d0b48ce0328cc4a45fe872d38b97a05ccd"},
-    {file = "structlog-20.2.0.tar.gz", hash = "sha256:af79dfa547d104af8d60f86eac12fb54825f54a46bc998e4504ef66177103174"},
+"structlog 21.5.0" = [
+    {file = "structlog-21.5.0-py3-none-any.whl", hash = "sha256:fd7922e195262b337da85c2a91c84be94ccab1f8fd1957bd6986f6904e3761c8"},
+    {file = "structlog-21.5.0.tar.gz", hash = "sha256:68c4c29c003714fe86834f347cb107452847ba52414390a7ee583472bde00fc9"},
 ]
 "tomli 2.0.1" = [
     {file = "tomli-2.0.1-py3-none-any.whl", hash = "sha256:939de3e7a6161af0c887ef91b7d41a53e7c5a1ca976325f429cb46ea9bc30ecc"},
