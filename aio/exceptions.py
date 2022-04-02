@@ -23,7 +23,7 @@ class FutureFinishedError(FutureError):
     pass
 
 
-class Cancelled(Exception):
+class Cancelled(BaseException):
     def __init__(self, msg: str | None = None) -> None:
         self.msg = msg
 
@@ -31,7 +31,11 @@ class Cancelled(Exception):
         return isinstance(other, type(self)) and self.args == other.args
 
 
-def create_multi_error(msg: str | None, *children: Exception) -> MultiError:
+class KeyboardCanceled(Cancelled):
+    pass
+
+
+def create_multi_error(msg: str | None, *children: BaseException) -> MultiError:
     if any(isinstance(child, Cancelled) for child in children):
         return CancelMultiError(msg, *children)
     else:
@@ -39,7 +43,7 @@ def create_multi_error(msg: str | None, *children: Exception) -> MultiError:
 
 
 class MultiError(Exception):
-    def __init__(self, msg: str | None, *children: Exception) -> None:
+    def __init__(self, msg: str | None, *children: BaseException) -> None:
         self.children = children
         self.msg = msg
 
@@ -50,7 +54,7 @@ class MultiError(Exception):
 
 
 class CancelMultiError(MultiError, Cancelled):
-    def __init__(self, msg: str | None, *children: Exception) -> None:
+    def __init__(self, msg: str | None, *children: BaseException) -> None:
         if not any(isinstance(child, Cancelled) for child in children):
             raise ValueError(
                 f"`{self.__name__}` could only be created from child branch exceptions"

@@ -195,7 +195,7 @@ class SelectorNetworking(Networking):
         waiter: Promise[Any] = _create_promise(f"socket-{event_name}-waiter", sock=sock)
 
         def done_cb(_: int, __: int) -> None:
-            if not waiter.future.is_finished():
+            if not waiter.future.is_finished:
                 waiter.set_result(None)
 
         self._selector.add_watch(sock.fileno(), events, done_cb)

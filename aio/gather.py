@@ -9,7 +9,7 @@ from aio.queue import Queue
 async def iter_done_futures(
     *futures: Future[Any],
 ) -> AsyncIterator[AsyncIterable[Future[Any]]]:
-    queue = Queue(max_capacity=len(futures))
+    queue: Queue[Any] = Queue(max_capacity=len(futures))
     undone_count = len(futures)
 
     def on_future_done(fut_: Future[Any]) -> None:
@@ -26,5 +26,6 @@ async def iter_done_futures(
     try:
         yield queue
     finally:
+        queue.close()
         for fut in futures:
             fut.remove_callback(on_future_done)

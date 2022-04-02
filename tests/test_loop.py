@@ -357,7 +357,7 @@ class TestLoopStepping:
 class TestLoopRunner:
     @pytest.fixture
     def runner(self, clock, selector):
-        loop = BaseEventLoop(selector, Mock(side_effect=Exception("Not exists.")), clock=clock)
+        loop = BaseEventLoop(selector, Mock(side_effect=Exception("Not exists")), clock=clock)
         runner = BaseLoopRunner(loop, selector)
         return runner
 

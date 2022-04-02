@@ -8,11 +8,11 @@ from typing import (
     AsyncContextManager,
     Callable,
     ContextManager,
+    Coroutine,
     Mapping,
+    ParamSpec,
     Protocol,
     TypeVar,
-    ParamSpec,
-    Coroutine,
 )
 
 if TYPE_CHECKING:

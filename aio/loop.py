@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextvars
+import os
 import signal
 from contextlib import asynccontextmanager, contextmanager
 from functools import partial
@@ -13,11 +14,10 @@ from typing import (
     ContextManager,
     Iterator,
     Mapping,
-    TypeVar,
     ParamSpec,
+    TypeVar,
 )
 
-import os
 import structlog
 
 from aio.components.clock import MonotonicClock
@@ -26,6 +26,7 @@ from aio.components.networking import (
     create_selectors_event_selector,
 )
 from aio.components.scheduler import Scheduler
+from aio.exceptions import KeyboardCanceled
 from aio.interfaces import (
     Clock,
     EventLoop,
@@ -177,7 +178,7 @@ class BaseEventLoop(EventLoop):
         # Invoke early callbacks
         if early_callbacks:
             self._logger.debug(
-                f"Invoking early callbacks",
+                "Invoking early callbacks",
                 callbacks_num=len(early_callbacks),
             )
             with measure_callbacks:
@@ -206,7 +207,7 @@ class BaseEventLoop(EventLoop):
         # Pop late-callbacks and invoke them
         late_callbacks = self._scheduler.pop_pending(end_at)
         self._logger.debug(
-            f"Invoking late callbacks",
+            "Invoking late callbacks",
             callbacks_num=len(early_callbacks),
         )
         with measure_callbacks:
@@ -303,7 +304,7 @@ class BaseEventLoop(EventLoop):
         call_at = self._clock.now() + timeout
         if self._debug:
             self._logger.debug(
-                f"Enqueuing callback at",
+                "Enqueuing callback at",
                 callback=target,
                 callback_args=args,
                 call_at=call_at,
@@ -347,7 +348,6 @@ class BaseLoopRunner(LoopRunner):
         from aio.future import _create_task
 
         root_task = _create_task(coroutine, _loop=self._loop)
-        sigint_received = False
         received_fut: Future[T] | None = None
 
         def receive_result(fut: Future[T]) -> None:
@@ -355,28 +355,23 @@ class BaseLoopRunner(LoopRunner):
             received_fut = fut
 
         def on_keyboard_interrupt(*_: Any) -> None:
-            nonlocal sigint_received
-            sigint_received = True
             self._logger.debug("Keyboard interrupt request arrived")
-            self._selector.wakeup_thread_safe()
+            raise KeyboardCanceled
 
         root_task.add_callback(receive_result)
 
         with SignalHandlerInstaller(signal.SIGINT, on_keyboard_interrupt):
             for _ in count():
-                self._loop.run_step()
-                # Delay cancelling of root task, otherwise `on_keyboard_interrupt`
-                # might be called right inside coroutine and cause surprising behaviour
-                if sigint_received and not root_task.is_finished():
-                    self._logger.debug("Cancelling root task due to keyboard interrupt")
-                    root_task._cancel("Keyboard interrupt")
-                    sigint_received = False
+                try:
+                    self._loop.run_step()
+                except KeyboardCanceled:
+                    raise
                 if received_fut:
                     break
 
-        assert root_task.is_finished()
+        assert root_task.is_finished
         assert received_fut is not None
-        return received_fut.result
+        return received_fut.result()
 
 
 @contextmanager

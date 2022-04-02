@@ -3,26 +3,27 @@ from __future__ import annotations
 import contextvars
 import inspect
 import warnings
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import (
     Any,
+    Coroutine,
+    Generator,
     Generic,
+    Literal,
     Mapping,
     Protocol,
     TypeVar,
-    Generator,
-    Coroutine,
 )
 
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
 from aio.interfaces import EventLoop
 from aio.loop import _get_running_loop
 
-#
-# if TYPE_CHECKING:
-#     from aio.types import Coroutine
-
 T = TypeVar("T")
+
+
+class _Sentry(Enum):
+    not_set = "not-set"
 
 
 class FutureResultCallback(Protocol[T]):
@@ -34,7 +35,7 @@ class Promise(Protocol[T]):
     def set_result(self, val: T) -> None:
         raise NotImplementedError
 
-    def set_exception(self, exc: Exception) -> None:
+    def set_exception(self, exc: BaseException) -> None:
         raise NotImplementedError
 
     def cancel(self, msg: str | None = None) -> None:
@@ -52,9 +53,9 @@ class _FuturePromise(Promise[T]):
     def set_result(self, val: T) -> None:
         self._fut._set_result(val=val)
 
-    def set_exception(self, exc: Exception) -> None:
+    def set_exception(self, exc: BaseException) -> None:
         if isinstance(exc, Cancelled):
-            raise ValueError(
+            raise TypeError(
                 f"Use cancellation API instead of passing exception "
                 f"`{Cancelled.__module__}.{Cancelled.__qualname__}` manually"
             )
@@ -68,13 +69,6 @@ class _FuturePromise(Promise[T]):
         return self._fut
 
 
-class _NotSet:
-    pass
-
-
-_not_set = _NotSet()
-
-
 class Future(Generic[T]):
     class State(IntEnum):
         created = 0
@@ -84,8 +78,8 @@ class Future(Generic[T]):
         finished = 4
 
     def __init__(self, loop: EventLoop, label: str | None = None, **context: Any) -> None:
-        self._value: T | _NotSet = _not_set
-        self._exc: Exception | _NotSet = _not_set
+        self._value: T | Literal[_Sentry.not_set] = _Sentry.not_set
+        self._exc: BaseException | None = None
         self._label = label
         self._context: Mapping[str, Any] = {
             "future": self,
@@ -106,30 +100,24 @@ class Future(Generic[T]):
     def subscribers_count(self) -> int:
         return len(self._result_callbacks)
 
-    @property
-    def _exception(self) -> Exception | None:
-        return self._exc if not isinstance(self._exc, _NotSet) else None
-
-    @property
     def result(self) -> T:
-        if not self.is_finished():
+        if not self.is_finished:
             raise FutureNotReady
-        if self._exception is not None:
-            raise self._exception
-        assert not isinstance(self._value, _NotSet)
+        if self._exc is not None:
+            raise self._exc
+        assert self._value is not _Sentry.not_set
         return self._value
 
-    @property
-    def exception(self) -> Exception | None:
-        if not self.is_finished():
+    def exception(self) -> BaseException | None:
+        if not self.is_finished:
             raise FutureNotReady
-        return self._exception
+        return self._exc
 
     def add_callback(self, cb: FutureResultCallback[T]) -> None:
         if cb in self._result_callbacks:
             return
 
-        if self.is_finished():
+        if self.is_finished:
             self._schedule_callback(cb)
             return
 
@@ -141,55 +129,61 @@ class Future(Generic[T]):
         except ValueError:
             pass
 
+    @property
     def is_finished(self) -> bool:
-        finished = self._value is not _not_set or self._exc is not _not_set
-        assert not finished or self._state == Future.State.finished, "Future has inconsistent state"
+        finished = self._state == Future.State.finished
         return finished
 
+    @property
     def is_cancelled(self) -> bool:
-        return self.is_finished() and isinstance(self._exc, Cancelled)
+        return self.is_finished and isinstance(self._exc, Cancelled)
 
     def _call_callbacks(self) -> None:
-        assert self.is_finished(), "Future must finish before calling callbacks"
+        if not self.is_finished:
+            raise RuntimeError("Future must finish before calling callbacks")
 
         for cb in self._result_callbacks:
             self._schedule_callback(cb)
 
     def _schedule_callback(self, cb: FutureResultCallback[T]) -> None:
-        assert self.is_finished(), "Future must finish before scheduling callbacks"
+        assert self.is_finished
 
         self._loop.call_soon(cb, self, context=self._context)
 
     def _set_result(
         self,
-        val: T | _NotSet = _not_set,
-        exc: Exception | _NotSet = _not_set,
+        val: T | Literal[_Sentry.not_set] = _Sentry.not_set,
+        exc: BaseException | None = None,
     ) -> None:
-        if self.is_finished():
+        if val is not _Sentry.not_set and exc is not None:
+            raise ValueError(
+                "Both result value and exception given, but they are mutually exclusive"
+            )
+
+        if self.is_finished:
             raise FutureFinishedError
 
         self._state = Future.State.finished
-
         self._value = val
         self._exc = exc
+
         self._call_callbacks()
 
     def _cancel(self, msg: str | None = None) -> None:
         self._set_result(exc=Cancelled(msg))
 
     def __await__(self) -> Generator[Future[Any], None, T]:
-        if not self.is_finished():
+        if not self.is_finished:
             yield self
 
-        if not self.is_finished():
+        if not self.is_finished:
             raise FutureNotReady("The future object resumed before result has been set")
 
-        if self._exception:
-            raise self._exception
+        if self._exc is not None:
+            raise self._exc
 
-        assert not isinstance(
-            self._value, _NotSet
-        ), "Value and exception mutually exclusive when `is_finished` returns True"
+        if self._value is _Sentry.not_set:
+            raise RuntimeError("Both result value and exception being set")
         return self._value
 
     def __repr__(self) -> str:
@@ -202,7 +196,7 @@ class Future(Generic[T]):
         return self is other
 
     def __del__(self) -> None:
-        if not self.is_finished():
+        if not self.is_finished:
             warnings.warn(
                 (
                     f"Feature `{self}` is about to be destroyed, "
@@ -224,16 +218,17 @@ class Task(Future[T]):
             raise TypeError(f"Coroutine object is expected, not `{coroutine}`")
 
         super().__init__(loop, label, task=self, future=None)
+
         self._coroutine = coroutine
         self._waiting_on: Future[Any] | None = None
         self._pending_cancellation = False
         self._state = Future.State.created
         self._started_promise: Promise[None] = _create_promise(
-            f"task-started-future", _loop=loop, served_task=self
+            "task-started-future", _loop=loop, served_task=self
         )
 
     def _cancel(self, msg: str | None = None) -> None:
-        if self.is_finished():
+        if self.is_finished:
             raise FutureFinishedError
 
         self._state = Future.State.finishing
@@ -253,14 +248,18 @@ class Task(Future[T]):
     def _execute_coroutine_step(self) -> None:
         cv_context = contextvars.copy_context()
         try:
-            future = cv_context.run(self._send_to_coroutine_within_new_context)
-        except StopIteration as exc:
-            val: T = exc.value
-            self._set_result(val=val)
-            return
-        except Exception as exc:
-            self._set_result(exc=exc)
-            return
+            try:
+                future = cv_context.run(self._send_to_coroutine_within_new_context)
+            except StopIteration as exc:
+                val: T = exc.value
+                self._set_result(val=val)
+                return
+            except BaseException as exc:
+                self._set_result(exc=exc)
+                return
+        finally:
+            if self._waiting_on:
+                self._waiting_on.remove_callback(self._schedule_execution)
 
         if self._state == Future.State.scheduled:
             self._state = Future.State.running
@@ -272,29 +271,30 @@ class Task(Future[T]):
                 "infinity awaiting that's why is forbidden"
             )
 
-        if self._waiting_on:
-            self._waiting_on.remove_callback(self._schedule_execution)
-
-        assert isinstance(future, Future)
-        if isinstance(future, Task) and future._loop is not self._loop:
+        if future._loop is not self._loop:
             raise RuntimeError(
-                f'During processing task "{self!r}" another '
-                f'task has been "{future!r}" received, which '
-                f"does not belong to the same loop"
+                f"During processing task `{self!r}` another "
+                f"feature has been `{future!r}` received, which "
+                "does not belong to the same loop"
             )
 
         future.add_callback(self._schedule_execution)
         self._waiting_on = future
 
-    def _set_result(self, val: T | _NotSet = _not_set, exc: Exception | _NotSet = _not_set) -> None:
+    def _set_result(
+        self, val: T | Literal[_Sentry.not_set] = _Sentry.not_set, exc: BaseException | None = None
+    ) -> None:
         super()._set_result(val, exc)
-        if not self._started_promise.future.is_finished():
+        if not self._started_promise.future.is_finished:
             self._started_promise.set_result(None)
 
     def _send_to_coroutine_within_new_context(self) -> Future[Any]:
         reset_token = _current_task.set(self)
         try:
-            return self._coroutine.send(None)
+            maybe_feature = self._coroutine.send(None)
+            if not isinstance(maybe_feature, Future):
+                raise RuntimeError("All `aio` coroutines must yield and `Feature` instance")
+            return maybe_feature
         finally:
             _current_task.reset(reset_token)
 

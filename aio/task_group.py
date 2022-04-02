@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, TypeVar, Any, Coroutine
+from typing import Any, AsyncIterator, Coroutine, TypeVar
 
 from aio.exceptions import Cancelled, MultiError, create_multi_error
 from aio.funcs import shield
-from aio.future import Task, _create_task, Future
+from aio.future import Future, Task, _create_task
 from aio.gather import iter_done_futures
 
 T = TypeVar("T", covariant=True)
@@ -46,8 +46,8 @@ class TaskGroup:
                 f"joining on child tasks, that should never happened!"
             )
 
-        assert all(task.is_finished() for task in tasks), "All task must be finished here"
-        task_exceptions = [task.exception for task in tasks if task.exception]
+        assert all(task.is_finished for task in tasks), "All task must be finished here"
+        task_exceptions = [exc for task in tasks if (exc := task.exception())]
 
         if task_exceptions:
             raise create_multi_error("Child task errors", *task_exceptions)
@@ -79,13 +79,13 @@ async def task_group() -> AsyncIterator[TaskGroup]:
                 await shield(join_task)
                 break
             except Cancelled:
-                if join_task.is_cancelled():
+                if join_task.is_cancelled:
                     raise
                 else:
                     # TODO does it OK to cancel tasks which is already cancelling?
                     tg.cancel()
 
-        assert join_task.is_finished()
+        assert join_task.is_finished
     except (MultiError, Cancelled) as exc:
         if body_exc:
             raise create_multi_error("Body exception aborts children task", body_exc, exc)

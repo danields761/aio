@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, TypeVar, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, TypeVar
 
 from aio.exceptions import Cancelled
 from aio.future import Future, Promise, Task, _create_promise, _current_task
@@ -35,12 +35,13 @@ def shield(future: Future[T]) -> Future[T]:
     shield_promise: Promise[T] = _create_promise()
 
     def future_done_cb(_: Future[T]) -> None:
-        assert future.is_finished()
+        assert future.is_finished
 
-        if future.exception:
-            shield_promise.set_exception(future.exception)
+        exc = future.exception()
+        if exc:
+            shield_promise.set_exception(exc)
         else:
-            shield_promise.set_result(future.result)
+            shield_promise.set_result(future.result())
 
     future.add_callback(future_done_cb)
 
