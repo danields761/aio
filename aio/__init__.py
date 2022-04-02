@@ -14,7 +14,8 @@ from aio.future import Future, FutureResultCallback, Task
 from aio.gather import iter_done_futures
 from aio.interfaces import (
     EventLoop,
-    EventSelector,
+    IOSelector,
+    IOEventCallback,
     Executor,
     Handle,
     Networking,
@@ -41,7 +42,8 @@ __all__ = [
     "Task",
     "iter_done_futures",
     "EventLoop",
-    "EventSelector",
+    "IOSelector",
+    "IOEventCallback",
     "Executor",
     "Handle",
     "Networking",

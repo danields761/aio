@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING, Any, ContextManager, Iterator, cast
 import structlog
 
 from aio.exceptions import SocketConfigurationError
-from aio.interfaces import EventCallback, EventSelector, Networking
+from aio.interfaces import (
+    IOEventCallback,
+    IOSelector,
+    Networking,
+    SocketAddress,
+)
 
 if TYPE_CHECKING:
     from aio.future import Promise
@@ -18,7 +23,7 @@ if TYPE_CHECKING:
 
 _log = structlog.get_logger(__name__)
 
-_SelectorKeyData = set[tuple[int, EventCallback]]
+_SelectorKeyData = set[tuple[int, IOEventCallback]]
 
 
 class _SelectorWakeupper:
@@ -43,7 +48,7 @@ class _SelectorWakeupper:
             {
                 (
                     selectors.EVENT_READ,
-                    cast(EventCallback, self._on_receiver_input),
+                    cast(IOEventCallback, self._on_receiver_input),
                 )
             },
         )
@@ -79,7 +84,7 @@ class _SelectorWakeupper:
                 )
 
 
-class SelectorsEventsSelector(EventSelector):
+class SelectorsEventsSelector(IOSelector):
     def __init__(
         self,
         *,
@@ -100,7 +105,7 @@ class SelectorsEventsSelector(EventSelector):
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
         self._is_finalized = False
 
-    def select(self, timeout: float | None) -> list[tuple[EventCallback, int, int]]:
+    def select(self, timeout: float | None) -> list[tuple[IOEventCallback, int, int]]:
         self._check_not_finalized()
 
         ready = self._selector.select(timeout)
@@ -111,7 +116,7 @@ class SelectorsEventsSelector(EventSelector):
             if events & need_events == need_events
         ]
 
-    def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
+    def add_watch(self, fd: int, events: int, cb: IOEventCallback) -> None:
         self._check_not_finalized()
 
         if fd not in self._selector.get_map():
@@ -124,7 +129,7 @@ class SelectorsEventsSelector(EventSelector):
                 key.data | {(events, cb)},
             )
 
-    def stop_watch(self, fd: int, events: int | None, cb: EventCallback | None) -> None:
+    def stop_watch(self, fd: int, events: int | None, cb: IOEventCallback | None) -> None:
         self._check_not_finalized()
 
         if (events is None) != (cb is None):
@@ -169,7 +174,7 @@ class SelectorsEventsSelector(EventSelector):
 class SelectorNetworking(Networking):
     def __init__(
         self,
-        selector: EventSelector,
+        selector: IOSelector,
         *,
         logger: Logger | None = None,
     ) -> None:
@@ -203,7 +208,7 @@ class SelectorNetworking(Networking):
             self._waiters.remove(waiter)
             self._selector.stop_watch(sock.fileno(), events, done_cb)
 
-    async def sock_connect(self, sock: socket.socket, addr: str) -> None:
+    async def sock_connect(self, sock: socket.socket, addr: SocketAddress) -> None:
         with self._manage_sock(sock):
             while True:
                 try:
@@ -214,7 +219,7 @@ class SelectorNetworking(Networking):
 
                 await self._wait_sock_events(sock, selectors.EVENT_WRITE, "connect")
 
-    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, Any]:
+    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, SocketAddress]:
         with self._manage_sock(sock):
             while True:
                 try:
@@ -279,11 +284,11 @@ class SelectorNetworking(Networking):
 
 def create_selectors_event_selector(
     logger: Logger | None = None,
-) -> ContextManager[EventSelector]:
+) -> ContextManager[IOSelector]:
     return closing(SelectorsEventsSelector(logger=logger))
 
 
 def create_selector_networking(
-    selector: EventSelector, logger: Logger | None = None
+    selector: IOSelector, logger: Logger | None = None
 ) -> ContextManager[SelectorNetworking]:
     return closing(SelectorNetworking(selector, logger=logger))

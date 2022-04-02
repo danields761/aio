@@ -30,8 +30,8 @@ from aio.exceptions import KeyboardCanceled
 from aio.interfaces import (
     Clock,
     EventLoop,
-    EventSelector,
     Handle,
+    IOSelector,
     LoopRunner,
     LoopRunnerFactory,
     Networking,
@@ -107,7 +107,7 @@ def _get_running_loop() -> EventLoop:
 class BaseEventLoop(EventLoop):
     def __init__(
         self,
-        selector: EventSelector,
+        selector: IOSelector,
         networking_factory: Callable[[], ContextManager[Networking]],
         *,
         clock: Clock = MonotonicClock(),
@@ -319,7 +319,7 @@ class BaseLoopRunner(LoopRunner):
     def __init__(
         self,
         loop: BaseEventLoop,
-        selector: EventSelector,
+        selector: IOSelector,
         *,
         logger: Logger | None = None,
     ) -> None:
@@ -377,7 +377,7 @@ class BaseLoopRunner(LoopRunner):
 @contextmanager
 def _default_loop_runner_factory(
     *,
-    selector_factory: Callable[[], ContextManager[EventSelector]] | None = None,
+    selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
     networking_factory: Callable[[], ContextManager[Networking]] | None = None,
     logger: Logger | None = None,
     **loop_kwargs: Any,

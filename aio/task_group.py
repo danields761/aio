@@ -30,6 +30,8 @@ class TaskGroup:
 
     def cancel(self, msg: str | None = None) -> None:
         for task in self._tasks:
+            if task.is_finished:
+                continue
             task._cancel(msg)
 
     async def _join(self) -> None:

@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 from aio.exceptions import Cancelled, FutureFinishedError
 from aio.funcs import get_loop
 from aio.future import Promise, _create_promise
-from aio.interfaces import EventSelector, Executor
+from aio.interfaces import IOSelector, Executor
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")
@@ -33,14 +33,8 @@ async def _stupid_execute_on_thread(
     def thread_fn() -> None:
         try:
             fn(*args, **kwargs)
-        except Exception as exc:
-            loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.set_exception, exc)
         except BaseException as exc:
-            new_exc = RuntimeError("Callable raises BaseException subclass")
-            new_exc.__cause__ = exc
-            loop.call_soon_thread_safe(
-                _ignore_feature_finished_error, waiter.set_exception, new_exc
-            )
+            loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.set_exception, exc)
         else:
             loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.set_result, None)
 
@@ -51,7 +45,7 @@ async def _stupid_execute_on_thread(
 
 
 class ConcurrentExecutor(Executor):
-    def __init__(self, selector: EventSelector, executor: _Executor) -> None:
+    def __init__(self, selector: IOSelector, executor: _Executor) -> None:
         self._selector = selector
         self._executor = executor
 
@@ -68,11 +62,6 @@ class ConcurrentExecutor(Executor):
             if cfuture.cancelled():
                 loop.call_soon_thread_safe(_ignore_feature_finished_error, waiter.cancel)
             elif exc := cfuture.exception():
-                if not isinstance(exc, Exception):
-                    new_exc = RuntimeError("Callable raises `BaseException` subclass")
-                    new_exc.__cause__ = exc
-                    exc = new_exc
-
                 loop.call_soon_thread_safe(
                     _ignore_feature_finished_error, waiter.set_exception, exc
                 )
@@ -103,7 +92,7 @@ async def _close_std_executor(executor: _Executor) -> None:
 
 @asynccontextmanager
 async def concurrent_executor_factory(
-    selector: EventSelector, override_executor: _Executor | None = None
+    selector: IOSelector, override_executor: _Executor | None = None
 ) -> AsyncIterator[Executor]:
     std_executor = override_executor or ThreadPoolExecutor(thread_name_prefix="loop-executor")
     executor = ConcurrentExecutor(selector, std_executor)

@@ -31,19 +31,19 @@ class Clock(Protocol):
         raise NotImplementedError
 
 
-class EventCallback(Protocol):
+class IOEventCallback(Protocol):
     def __call__(self, fd: int, events: int, /) -> None:
         raise NotImplementedError
 
 
-class EventSelector(Protocol):
-    def select(self, time_: float | None) -> list[tuple[EventCallback, int, int]]:
+class IOSelector(Protocol):
+    def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int]]:
         raise NotImplementedError
 
-    def add_watch(self, fd: int, events: int, cb: EventCallback) -> None:
+    def add_watch(self, fd: int, events: int, cb: IOEventCallback) -> None:
         raise NotImplementedError
 
-    def stop_watch(self, fd: int, events: int | None, cb: EventCallback | None) -> None:
+    def stop_watch(self, fd: int, events: int | None, cb: IOEventCallback | None) -> None:
         raise NotImplementedError
 
     def wakeup_thread_safe(self) -> None:
@@ -134,6 +134,12 @@ class Executor(Protocol):
         raise NotImplementedError
 
 
+#: Socket address type, which could be passed into `socket.connect` and
+#: returned from `socket.accept` methods. Not well defined in std library,
+#: so and we do so.
+SocketAddress = str | bytes | tuple[Any, ...]
+
+
 class Networking(Protocol):
     async def wait_sock_ready_to_read(self, sock: socket.socket) -> None:
         """
@@ -153,7 +159,7 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_connect(self, sock: socket.socket, addr: Any) -> None:
+    async def sock_connect(self, sock: socket.socket, addr: SocketAddress) -> None:
         """
 
         :param sock:
@@ -163,7 +169,7 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, Any]:
+    async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, SocketAddress]:
         """
 
         :param sock:
