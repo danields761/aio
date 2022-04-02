@@ -1,9 +1,4 @@
-from typing import (
-    Any,
-    Mapping,
-    Protocol,
-    TypeVar,
-)
+from typing import Any, Mapping, Protocol, TypeVar
 
 T = TypeVar("T")
 

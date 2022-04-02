@@ -1,10 +1,9 @@
 import threading
-from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, TypeVar, ParamSpec
-
 from concurrent.futures import Executor as _Executor
 from concurrent.futures import Future as _Future
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError
 from aio.funcs import get_loop

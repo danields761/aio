@@ -4,13 +4,7 @@ import signal
 import sys
 import types
 import warnings
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    AsyncGenerator,
-    Callable,
-    Type,
-)
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Type
 from weakref import WeakSet
 
 if TYPE_CHECKING:

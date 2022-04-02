@@ -1,8 +1,7 @@
 import heapq
 import itertools
-from typing import Callable, Generic, Iterable, TypeVar, Protocol
-
 from collections import deque
+from typing import Callable, Generic, Iterable, Protocol, TypeVar
 
 from aio.interfaces import Handle
 

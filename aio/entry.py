@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, TypeVar, Coroutine
+from typing import Any, Coroutine, TypeVar
 
 from aio.future import Future
 from aio.loop import get_loop_runner_factory

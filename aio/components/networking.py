@@ -3,18 +3,14 @@ from __future__ import annotations
 import functools
 import selectors
 import socket
+from collections import defaultdict
 from contextlib import closing, contextmanager
 from typing import TYPE_CHECKING, Any, ContextManager, Iterator, cast
 
 import structlog
-from collections import defaultdict
 
 from aio.exceptions import SocketConfigurationError
-from aio.interfaces import (
-    EventCallback,
-    EventSelector,
-    Networking,
-)
+from aio.interfaces import EventCallback, EventSelector, Networking
 
 if TYPE_CHECKING:
     from aio.future import Promise

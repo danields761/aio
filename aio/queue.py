@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import AsyncIterable, AsyncIterator, Iterable, Tuple, TypeVar
-
 from collections import deque
+from typing import AsyncIterable, AsyncIterator, Iterable, Tuple, TypeVar
 
 from aio.future import Promise, _create_promise
 
