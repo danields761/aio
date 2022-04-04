@@ -4,16 +4,7 @@ import contextvars
 import inspect
 import warnings
 from enum import Enum, IntEnum
-from typing import (
-    Any,
-    Coroutine,
-    Generator,
-    Generic,
-    Literal,
-    Mapping,
-    Protocol,
-    TypeVar,
-)
+from typing import Any, Coroutine, Generator, Generic, Literal, Mapping, Protocol, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
 from aio.interfaces import EventLoop

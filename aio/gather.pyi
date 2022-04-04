@@ -1,11 +1,4 @@
-from typing import (
-    Any,
-    AsyncContextManager,
-    AsyncIterator,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import Any, AsyncContextManager, AsyncIterator, TypeVar, Union, overload
 
 from aio import Future
 

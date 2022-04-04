@@ -21,6 +21,10 @@ def _emit_undone_async_gen_warn(async_gen: AsyncGenerator[Any, Any], stack_level
     )
 
 
+def is_agen_closed(agen: AsyncGenerator[Any, Any]) -> bool:
+    return agen.ag_frame is None
+
+
 class WarnUndoneAsyncGens:
     def __init__(self) -> None:
         self.controlled_async_gens: WeakSet[Any] = WeakSet()
@@ -35,6 +39,8 @@ class WarnUndoneAsyncGens:
         self._emit_warning(async_gen, stack_level=1)
 
     def _emit_warning(self, async_gen: AsyncGenerator[Any, Any], stack_level: int = 0) -> None:
+        if is_agen_closed(async_gen):
+            return
         if id(async_gen) in self.already_emitted:
             return
         self.already_emitted.add(id(async_gen))

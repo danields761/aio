@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, ContextManager, Iterator
 
 import structlog
 
-from aio.components.networking import (
-    create_selector_networking,
-    create_selectors_event_selector,
-)
+from aio.components.networking import create_selector_networking, create_selectors_event_selector
 from aio.interfaces import EventLoop, IOSelector, LoopFactory, Networking
 
 if TYPE_CHECKING:

@@ -409,6 +409,8 @@ class TestLoopRun:
             should_be_called()
             # Probably wont work in a lot of cases and may cause wired behaviour
             os.kill(os.getpid(), signal.SIGINT)
+            # Suspend coroutine to initialize further processing
+            await aio.sleep(10)
 
             should_not_be_called()
 
@@ -436,27 +438,66 @@ class TestEntryRun:
     ):
         should_be_called_in_root = Mock()
         should_be_called_in_gen = Mock()
+        should_not_be_called_in_gen = Mock()
 
         async def async_gen():
             should_be_called_in_gen()
             yield 1
             yield 2
+            should_not_be_called_in_gen()
 
         async def root():
             should_be_called_in_root()
-            async for _ in async_gen():
-                break
+
+            gen = async_gen()
+            await gen.asend(None)
+            del gen
+
             gc.collect()
 
         with pytest.warns(UserWarning) as warn_info:
             aio.run(
-                root(), selector_factory=selector_factory, networking_factory=networking_factory
+                root(),
+                selector_factory=selector_factory,
+                networking_factory=networking_factory,
             )
 
         assert should_be_called_in_root.mock_calls == [call()]
         assert should_be_called_in_gen.mock_calls == [call()]
+        assert should_not_be_called_in_gen.mock_calls == []
         assert any(
             "Async-generator shutdown request income for" in warn.message.args[0]
             and warn.filename == __file__
             for warn in warn_info.list
         )
+
+    def test_should_not_warn_if_async_gen_being_gc_after_finish(
+        self, clock, selector_factory, networking_factory
+    ):
+        should_be_called_in_root = Mock()
+        should_be_called_in_gen = Mock()
+
+        async def async_gen():
+            should_be_called_in_gen()
+            yield 1
+            yield 2
+            should_be_called_in_gen()
+
+        async def root():
+            should_be_called_in_root()
+
+            async for _ in async_gen():
+                pass
+
+            gc.collect()
+
+        with pytest.WarningsRecorder() as warn_info:
+            aio.run(
+                root(),
+                selector_factory=selector_factory,
+                networking_factory=networking_factory,
+            )
+
+        assert should_be_called_in_root.mock_calls == [call()]
+        assert should_be_called_in_gen.mock_calls == [call(), call()]
+        assert warn_info.list == []

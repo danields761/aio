@@ -35,6 +35,13 @@ build-backend = "pdm.pep517.api"
 [tool.black]
 line-length = 100
 
+[tool.isort]
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+
 [tool.mypy]
 warn_redundant_casts = true
 disallow_any_generics = true

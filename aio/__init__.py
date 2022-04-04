@@ -11,14 +11,7 @@ from aio.exceptions import (
 from aio.funcs import get_current_task, guard_async_gen, sleep
 from aio.future import Future, FutureResultCallback, Task
 from aio.gather import iter_done_futures
-from aio.interfaces import (
-    EventLoop,
-    Executor,
-    Handle,
-    IOEventCallback,
-    IOSelector,
-    Networking,
-)
+from aio.interfaces import EventLoop, Executor, Handle, IOEventCallback, IOSelector, Networking
 from aio.loop.entry import run
 from aio.queue import Queue
 from aio.task_group import task_group
