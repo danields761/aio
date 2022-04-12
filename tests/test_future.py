@@ -1,10 +1,15 @@
+import gc
+import re
+import warnings
+from collections import deque
 from typing import Coroutine
 from unittest.mock import Mock, call
 
 import pytest
 
 import aio
-from aio.future import _create_promise, _create_task
+from aio.future import _create_promise, _create_task, create_task as create_task_cm, _guard_task
+from aio.loop._priv import _running_loop
 
 
 class SpecialExc(Exception):
@@ -20,7 +25,7 @@ def loop_last_enqueued():
 def loop_call_last_enqueued(loop_last_enqueued):
     def caller():
         while loop_last_enqueued:
-            target, args = loop_last_enqueued.pop()
+            target, args = loop_last_enqueued.pop(0)
             target(*args)
 
     return caller
@@ -31,10 +36,39 @@ def loop(loop_last_enqueued):
     def call_soon(target, *args, context=None):
         loop_last_enqueued.append((target, args))
 
+        def cancel():
+            try:
+                loop_last_enqueued.remove((target, args))
+            except ValueError:
+                pass
+
+        handle = Mock()
+        handle.cancel = cancel
+        return handle
+
     loop = Mock(aio.EventLoop)
     loop.call_soon = call_soon
     loop.call_later.side_effect = NotImplementedError('"call_later" is forbidden here')
-    return loop
+
+    token = _running_loop.set(loop)
+    yield loop
+    _running_loop.reset(token)
+
+
+def test_loop_mock(loop, loop_call_last_enqueued):
+    root = Mock()
+
+    loop.call_soon(root.first)
+    loop.call_soon(root.second, 1)
+    loop.call_soon(root.third, 1, 2)
+
+    loop_call_last_enqueued()
+
+    assert root.mock_calls == [
+        call.first(),
+        call.second(1),
+        call.third(1, 2),
+    ]
 
 
 @pytest.fixture
@@ -44,7 +78,7 @@ def create_promise(loop):
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro, th=None: _create_task(coro, label="test-task", _loop=loop)
+    return lambda coro, th=None: _create_task(coro, label=th or "test-task", _loop=loop)
 
 
 def finalize_coro(coro_inst: Coroutine):
@@ -101,6 +135,20 @@ class TestFuture:
             _ = future.result()
         assert exc_info.value is test_err
 
+    def test_warns_if_exc_not_retrieved(self, create_promise):
+        promise = create_promise()
+        promise.set_exception(Exception("unretrieved exception"))
+
+        with pytest.warns() as warn_cap:
+            del promise
+            gc.collect()
+
+        assert len(warn_cap.list) == 1
+        assert (
+            "is about to be destroyed, but her exception was never retrieved"
+            in warn_cap.list[0].message.args[0]
+        )
+
     def test_on_done_cbs_set_res(self, create_promise, loop_call_last_enqueued):
         cb = Mock()
         promise = create_promise()
@@ -140,6 +188,7 @@ class TestFuture:
 
         assert cb.mock_calls == [call(future)]
         assert future.is_finished
+        assert future.is_cancelled
         assert isinstance(future.exception(), aio.Cancelled)
 
     def test_finished_state_in_res_cb(self, create_promise, loop_call_last_enqueued):
@@ -203,8 +252,8 @@ class TestFuture:
         coro_inst = coro()
         assert coro_inst.send(None) is future
         with pytest.raises(
-            aio.FutureNotReady,
-            match="The future object resumed before result has been set",
+            RuntimeError,
+            match="Future being resumed after first yield, but still not finished!",
         ):
             coro_inst.send(None)
 

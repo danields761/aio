@@ -1,14 +1,37 @@
 from __future__ import annotations
 
+import abc
+import contextlib
 import contextvars
 import inspect
+import sys
+import traceback
 import warnings
+from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Any, Coroutine, Generator, Generic, Literal, Mapping, Protocol, TypeVar
+from typing import (
+    Any,
+    Coroutine,
+    Generator,
+    Generic,
+    Literal,
+    Mapping,
+    Protocol,
+    TypeVar,
+    AsyncIterator,
+    AsyncContextManager,
+)
 
-from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady
-from aio.interfaces import EventLoop
+from aio.exceptions import (
+    Cancelled,
+    FutureFinishedError,
+    FutureNotReady,
+    CancelledByChild,
+    CancelledByParent,
+)
+from aio.interfaces import EventLoop, Handle
 from aio.loop._priv import _get_running_loop
+from aio.utils import is_coro_running
 
 T = TypeVar("T")
 
@@ -22,18 +45,66 @@ class FutureResultCallback(Protocol[T]):
         raise NotImplementedError
 
 
-class Promise(Protocol[T]):
+class Promise(abc.ABC, Generic[T]):
+    @abc.abstractmethod
     def set_result(self, val: T) -> None:
         raise NotImplementedError
 
-    def set_exception(self, exc: BaseException) -> None:
+    @abc.abstractmethod
+    def set_exception(self, exc: BaseException, /) -> None:
         raise NotImplementedError
 
-    def cancel(self, msg: str | None = None) -> None:
+    @abc.abstractmethod
+    def cancel(self, msg: Cancelled | str | None = None, /) -> None:
         raise NotImplementedError
 
     @property
+    @abc.abstractmethod
     def future(self) -> Future[T]:
+        raise NotImplementedError
+
+
+class Future(abc.ABC, Generic[T]):
+    class State(IntEnum):
+        created = 0
+        scheduled = 1
+        running = 2
+        finishing = 3
+        finished = 4
+
+    @property
+    @abc.abstractmethod
+    def state(self) -> Future.State:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def result(self) -> T:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def exception(self) -> BaseException | None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def add_callback(self, cb: FutureResultCallback[T]) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def remove_callback(self, cb: FutureResultCallback[T]) -> None:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def is_finished(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def is_cancelled(self) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def __await__(self) -> Generator[Future[Any], None, T]:
         raise NotImplementedError
 
 
@@ -52,25 +123,44 @@ class _FuturePromise(Promise[T]):
             )
         self._fut._set_result(exc=exc)
 
-    def cancel(self, msg: str | None = None) -> None:
-        self._fut._cancel(msg)
+    def cancel(self, msg: Cancelled | str | None = None, /) -> None:
+        match msg:
+            case str() | None:
+                self._fut._cancel(msg=msg)
+            case Cancelled():
+                self._fut._cancel(exc=msg)
+            case _:
+                assert False
 
     @property
     def future(self) -> Future[T]:
         return self._fut
 
 
-class Future(Generic[T]):
-    class State(IntEnum):
-        created = 0
-        scheduled = 1
-        running = 2
-        finishing = 3
-        finished = 4
+@dataclass(frozen=True)
+class _PendingState(Generic[T]):
+    result_callbacks: dict[int, FutureResultCallback[T]]
 
+
+@dataclass
+class _SuccessState(Generic[T]):
+    result: T
+    scheduled_cbs: dict[int, Handle]
+
+
+@dataclass
+class _FailedState:
+    exc: BaseException
+    exc_retrieved: bool
+    scheduled_cbs: dict[int, Handle]
+
+
+class _SimpleFuture(Future[T], Generic[T]):
     def __init__(self, loop: EventLoop, label: str | None = None, **context: Any) -> None:
-        self._value: T | Literal[_Sentry.not_set] = _Sentry.not_set
-        self._exc: BaseException | None = None
+        self._state: _PendingState[T] | _SuccessState[T] | _FailedState = _PendingState(
+            result_callbacks={}
+        )
+
         self._label = label
         self._context: Mapping[str, Any] = {
             "future": self,
@@ -78,68 +168,83 @@ class Future(Generic[T]):
             **context,
         }
 
-        self._result_callbacks: set[FutureResultCallback[T]] = set()
-        self._state = Future.State.running
-
         self._loop = loop
 
     @property
     def state(self) -> Future.State:
-        return self._state
-
-    @property
-    def subscribers_count(self) -> int:
-        return len(self._result_callbacks)
+        match self._state:
+            case _PendingState():
+                return Future.State.running
+            case _SuccessState() | _FailedState():
+                return Future.State.finished
+            case _:
+                assert False
 
     def result(self) -> T:
-        if not self.is_finished:
-            raise FutureNotReady
-        if self._exc is not None:
-            raise self._exc
-        assert self._value is not _Sentry.not_set
-        return self._value
+        match self._state:
+            case _PendingState():
+                raise FutureNotReady
+            case _SuccessState(result=result):
+                return result
+            case _FailedState(exc=exc):
+                raise exc
+            case _:
+                assert False
 
     def exception(self) -> BaseException | None:
-        if not self.is_finished:
-            raise FutureNotReady
-        return self._exc
+        match self._state:
+            case _PendingState():
+                raise FutureNotReady
+            case _SuccessState():
+                return None
+            case _FailedState() as state:
+                state.exc_retrieved = True
+                return state.exc
+            case _:
+                assert False
 
     def add_callback(self, cb: FutureResultCallback[T]) -> None:
-        if cb in self._result_callbacks:
-            return
-
-        if self.is_finished:
-            self._schedule_callback(cb)
-            return
-
-        self._result_callbacks.add(cb)
+        match self._state:
+            case _PendingState(result_callbacks=cbs):
+                cbs[id(cb)] = cb
+            case _SuccessState() | _FailedState():
+                raise FutureFinishedError("Could not schedule callback for already finished future")
+            case _:
+                assert False
 
     def remove_callback(self, cb: FutureResultCallback[T]) -> None:
-        try:
-            self._result_callbacks.remove(cb)
-        except ValueError:
-            pass
+        match self._state:
+            case _PendingState(result_callbacks=cbs):
+                try:
+                    del cbs[id(cb)]
+                except KeyError:
+                    pass
+            case _SuccessState(scheduled_cbs=cbs) | _FailedState(scheduled_cbs=cbs):
+                try:
+                    handle = cbs.pop(id(cb))
+                except KeyError:
+                    pass
+                else:
+                    handle.cancel()
+            case _:
+                assert False
 
     @property
     def is_finished(self) -> bool:
-        finished = self._state == Future.State.finished
-        return finished
+        return isinstance(self._state, _SuccessState | _FailedState)
 
     @property
     def is_cancelled(self) -> bool:
-        return self.is_finished and isinstance(self._exc, Cancelled)
+        return isinstance(self._state, _FailedState) and isinstance(self._state.exc, Cancelled)
 
-    def _call_callbacks(self) -> None:
-        if not self.is_finished:
+    def _schedule_callbacks(self) -> dict[int, Handle]:
+        if not isinstance(self._state, _PendingState):
             raise RuntimeError("Future must finish before calling callbacks")
 
-        for cb in self._result_callbacks:
-            self._schedule_callback(cb)
-
-    def _schedule_callback(self, cb: FutureResultCallback[T]) -> None:
-        assert self.is_finished
-
-        self._loop.call_soon(cb, self, context=self._context)
+        return {
+            cb_id: self._loop.call_soon(cb, self, context=self._context)
+            for cb_id, cb in self._state.result_callbacks.items()
+        }
 
     def _set_result(
         self,
@@ -151,35 +256,32 @@ class Future(Generic[T]):
                 "Both result value and exception given, but they are mutually exclusive"
             )
 
-        if self.is_finished:
-            raise FutureFinishedError
+        scheduled_cbs = self._schedule_callbacks()
+        if val is not _Sentry.not_set:
+            self._state = _SuccessState(result=val, scheduled_cbs=scheduled_cbs)
+        elif exc is not None:
+            self._state = _FailedState(exc=exc, scheduled_cbs=scheduled_cbs, exc_retrieved=False)
+        else:
+            assert False
 
-        self._state = Future.State.finished
-        self._value = val
-        self._exc = exc
+    def _cancel(self, msg: str | None = None, exc: Cancelled | None = None) -> None:
+        if msg and exc:
+            raise ValueError("Either `msg` or `exc` arg should be given")
 
-        self._call_callbacks()
-
-    def _cancel(self, msg: str | None = None) -> None:
-        self._set_result(exc=Cancelled(msg))
+        self._set_result(exc=exc or Cancelled(msg))
 
     def __await__(self) -> Generator[Future[Any], None, T]:
-        if not self.is_finished:
+        if isinstance(self._state, _PendingState):
             yield self
 
-        if not self.is_finished:
-            raise FutureNotReady("The future object resumed before result has been set")
+        if isinstance(self._state, _PendingState):
+            raise RuntimeError("Future being resumed after first yield, but still not finished!")
 
-        if self._exc is not None:
-            raise self._exc
-
-        if self._value is _Sentry.not_set:
-            raise RuntimeError("Both result value and exception being set")
-        return self._value
+        return self.result()
 
     def __repr__(self) -> str:
         label = self._label if self._label else ""
-        return f"<Future label={label} state={self._state.name} at {hex(id(self))}>"
+        return f"<Future label={label} state={self.state.name} at {hex(id(self))}>"
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, type(self)):
@@ -193,6 +295,18 @@ class Future(Generic[T]):
                     f"Feature `{self}` is about to be destroyed, "
                     f"but not finished, that normally should never occur "
                     f"(feature context `{self._context}`)"
+                ),
+                stacklevel=2,
+            )
+        if isinstance(self._state, _FailedState) and not self._state.exc_retrieved:
+            exc_tb = ''.join(traceback.format_exception(self._state.exc))
+
+            warnings.warn(
+                (
+                    f"Feature `{self}` is about to be destroyed, but her exception was never "
+                    f"retrieved. Please, `await` this feature, or call `result` or "
+                    f"`exception` methods to prevent exception being ignored silently. "
+                    f"Ignored exception:\n{exc_tb}"
                 ),
                 stacklevel=2,
             )
