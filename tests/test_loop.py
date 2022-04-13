@@ -511,7 +511,7 @@ class TestEntryRun:
 
             gc.collect()
 
-        with pytest.warns() as warn_info:
+        with pytest.WarningsRecorder(_ispytest=True) as warn_info:
             aio.run(
                 root(),
                 selector_factory=selector_factory,

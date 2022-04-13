@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterator, TypeVar
+from typing import AsyncGenerator, AsyncIterator, TypeVar
 
-from aio.exceptions import Cancelled
-from aio.future import Future, Promise, Task, _create_promise, _current_task
+from aio.exceptions import Cancelled, FutureFinishedError
+from aio.future import create_promise
+from aio.interfaces import Future
 from aio.loop import get_running as get_running_loop
 
 T = TypeVar("T")
@@ -10,44 +11,50 @@ T_co = TypeVar("T_co", covariant=True)
 T_contra = TypeVar("T_contra", contravariant=True)
 
 
-async def get_current_task() -> Task[Any]:
-    try:
-        return _current_task.get()
-    except LookupError:
-        raise RuntimeError(
-            "Current task isn't accessible from current coroutine, "
-            "probably it being run on non-`aio` event loop instance"
-        )
-
-
-def shield(future: Future[T]) -> Future[T]:
-    shield_promise: Promise[T] = _create_promise()
+async def shield(future: Future[T]) -> T:
+    if future.is_finished:
+        return await future
 
     def future_done_cb(_: Future[T]) -> None:
         assert future.is_finished
 
         exc = future.exception()
-        if exc:
-            shield_promise.set_exception(exc)
-        else:
-            shield_promise.set_result(future.result())
+        match exc:
+            case Cancelled():
+                shield_promise.cancel(exc)
+            case BaseException():
+                shield_promise.set_exception(exc)
+            case None:
+                shield_promise.set_result(future.result())
+            case _:
+                assert False
 
-    future.add_callback(future_done_cb)
-
-    return shield_promise.future
+    async with create_promise("shield-promise") as shield_promise:
+        future.add_callback(future_done_cb)
+        try:
+            return await shield_promise.future
+        finally:
+            future.remove_callback(future_done_cb)
 
 
 async def sleep(sec: float) -> None:
+    def on_timeout() -> None:
+        try:
+            sleep_promise.set_result(None)
+        except FutureFinishedError:
+            pass
+
     loop = await get_running_loop()
+    async with create_promise("sleep-promise") as sleep_promise:
+        if sec == 0:
+            handle = loop.call_soon(on_timeout)
+        else:
+            handle = loop.call_later(sec, on_timeout)
 
-    sleep_promise: Promise[None] = _create_promise()
-    handle = loop.call_later(sec, sleep_promise.set_result, None)
-
-    try:
-        await sleep_promise.future
-    except Cancelled:
-        handle.cancel()
-        raise
+        try:
+            await sleep_promise.future
+        finally:
+            handle.cancel()
 
 
 @asynccontextmanager

@@ -2,15 +2,15 @@ import gc
 import inspect
 import sys
 from typing import Coroutine
-from unittest.mock import Mock, call
+from unittest.mock import ANY, Mock, call
 
 import pytest
 
 import aio
 import aio.future
 import aio.interfaces
-from aio.exceptions import SelfCancelForbidden
-from aio.future import _create_promise, _create_task, _Task, _guard_task
+from aio.exceptions import CancelledByChild, CancelledByParent, SelfCancelForbidden
+from aio.future import _create_promise, _create_task, _guard_task, _Task
 from aio.loop._priv import running_loop
 
 
@@ -45,14 +45,16 @@ def loop(loop_queue):
                 loop_queue.remove((target, args))
             except ValueError:
                 pass
+            handle.cancelled = True
 
-        handle = Mock()
-        handle.cancel = cancel
+        handle = Mock(name="handle")
+        handle.cancel = Mock(wraps=cancel)
+        handle.cancelled = False
         handle.executed = False
         return handle
 
-    loop = Mock(aio.EventLoop)
-    loop.call_soon = call_soon
+    loop = Mock(aio.EventLoop, name="loop")
+    loop.call_soon = Mock(wraps=call_soon)
     loop.call_later.side_effect = NotImplementedError('"call_later" is forbidden here')
 
     token = running_loop.set(loop)
@@ -586,6 +588,41 @@ class TestTask:
 
         assert should_never_be_called.mock_calls == []
 
+    def test_inner_cancel_when_awaited_future_finish(
+        self, create_promise, create_task, loop_make_step, loop
+    ):
+        inner_promise = create_promise("inner-future")
+
+        async def coroutine():
+            await inner_promise.future
+
+        task = create_task(coroutine())
+        loop_make_step()
+
+        assert task._state.waiting_on is inner_promise.future
+        inner_promise.set_result(None)
+        assert inner_promise.future._state.scheduled_cbs == {task._execute_coroutine_step: ANY}
+        handle = inner_promise.future._state.scheduled_cbs[task._execute_coroutine_step]
+        assert loop.mock_calls == [
+            call.call_soon(task._execute_coroutine_step),
+            call.call_soon(task._execute_coroutine_step, inner_promise.future, context=ANY),
+        ]
+
+        task.cancel()
+        assert loop.mock_calls == [
+            call.call_soon(task._execute_coroutine_step),
+            call.call_soon(task._execute_coroutine_step, inner_promise.future, context=ANY),
+            call.call_soon(task._execute_coroutine_step, None, aio.Cancelled()),
+        ]
+        assert inner_promise.future._state.scheduled_cbs == {}
+        assert handle.cancelled
+
+        loop_make_step()
+
+        assert task.is_finished
+        with pytest.raises(aio.Cancelled):
+            task.result()
+
     def test_self_cancel_is_forbidden(self, create_task, loop_make_step):
         async def coroutine():
             self_task = await aio.get_current_task()
@@ -647,3 +684,152 @@ class TestTask:
         loop_make_step()
 
         assert should_be_called.mock_calls == [call(), call()]
+
+
+class TestScopedTask:
+    def test_parent_ok_child_ok(self, loop_make_step, loop_queue, create_task):
+        root = Mock()
+
+        async def child():
+            root.child_started()
+            try:
+                return 2
+            finally:
+                root.child_finished()
+
+        async def parent():
+            root.parent_started()
+            async with _guard_task(child_task):
+                pass
+            root.parent_finished()
+            return 1
+
+        parent_task = create_task(parent(), "parent")
+        child_task = create_task(child(), "child")
+
+        loop_make_step()
+        assert child_task.is_finished
+        assert child_task.result() == 2
+
+        # 2 loop step required because parent will wait for child to finish via shield
+        loop_make_step()
+        loop_make_step()
+        assert parent_task.is_finished
+        assert parent_task.result() == 1
+
+        assert root.mock_calls == [
+            call.parent_started(),
+            call.child_started(),
+            call.child_finished(),
+            call.parent_finished(),
+        ]
+
+    def test_parent_exception_cancels_child(self, loop_make_step, loop_queue, create_task):
+        root = Mock()
+
+        async def child():
+            root.child_started()
+            try:
+                await aio.sleep(0)
+                return 2
+            except BaseException as exc:
+                root.child_exception(exc)
+                raise
+            finally:
+                root.child_finished()
+
+        async def parent():
+            root.parent_started()
+            try:
+                async with _guard_task(child_task):
+                    raise Exception("Parent exception")
+            finally:
+                root.parent_finished()
+
+        # Gibe the child task first turn to execute to make it in running (not scheduled) state
+        #  before parent will cancel it, otherwise child will not be executed at all
+        child_task = create_task(child(), "child")
+        parent_task = create_task(parent(), "parent")
+
+        loop_make_step()
+        assert root.mock_calls == [
+            call.child_started(),
+            call.parent_started(),
+        ]
+        loop_make_step()
+        assert root.mock_calls == [
+            call.child_started(),
+            call.parent_started(),
+            call.child_exception(CancelledByParent("Parent task being aborted with an exception")),
+            call.child_finished(),
+        ]
+
+        with pytest.raises(CancelledByParent):
+            child_task.result()
+
+        loop_make_step()
+        loop_make_step()
+        assert root.mock_calls == [
+            call.child_started(),
+            call.parent_started(),
+            call.child_exception(CancelledByParent("Parent task being aborted with an exception")),
+            call.child_finished(),
+            call.parent_finished(),
+        ]
+        with pytest.raises(Exception, match="Parent exception"):
+            parent_task.result()
+
+    def test_child_exception_cancels_parent(self, loop_make_step, loop_queue, create_task):
+        root = Mock()
+        child_exc = Exception("Child exception")
+
+        async def child():
+            root.child_started()
+            try:
+                raise child_exc
+            finally:
+                root.child_finished()
+
+        async def parent():
+            root.parent_started()
+            try:
+                async with _guard_task(child_task):
+                    try:
+                        await aio.sleep(0)
+                    except BaseException as exc:
+                        root.parent_in_sleep_exception(exc)
+                        raise
+            except BaseException as exc:
+                root.parent_exception(exc)
+                raise
+            finally:
+                root.parent_finished()
+
+        parent_task = create_task(parent(), "parent")
+        child_task = create_task(child(), "child")
+
+        loop_make_step()
+        assert root.mock_calls == [
+            call.parent_started(),
+            call.child_started(),
+            call.child_finished(),
+        ]
+        with pytest.raises(Exception, match="Child exception"):
+            child_task.result()
+
+        loop_make_step()
+        loop_make_step()
+        assert root.mock_calls == [
+            call.parent_started(),
+            call.child_started(),
+            call.child_finished(),
+            call.parent_in_sleep_exception(
+                CancelledByChild("Child task finished with an exception")
+            ),
+            call.parent_exception(CancelledByChild("Child task finished with an exception")),
+            call.parent_finished(),
+        ]
+        with pytest.raises(CancelledByChild):
+            parent_task.result()
+
+        assert parent_task.exception().__cause__ is child_exc
