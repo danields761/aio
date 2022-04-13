@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Coroutine, TypeVar
 
-from aio.future import Future
+from aio.interfaces import Future
 from aio.loop._priv import get_loop_factory
 from aio.utils import WarnUndoneAsyncGens
 

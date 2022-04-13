@@ -1,44 +1,39 @@
 from __future__ import annotations
 
 import contextvars
+import datetime
 import os
 import signal
 from contextlib import asynccontextmanager
 from functools import partial
-from itertools import count
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
     ContextManager,
+    Coroutine,
     Mapping,
     ParamSpec,
     TypeVar,
 )
 
-import structlog
-
 from aio.components.clock import MonotonicClock
 from aio.components.scheduler import Scheduler
-from aio.exceptions import KeyboardCanceled
+from aio.exceptions import KeyboardCancelled, SelfCancelForbidden
 from aio.interfaces import (
     Clock,
     EventLoop,
+    Executor,
+    Future,
     Handle,
     IOSelector,
     Networking,
+    Task,
     UnhandledExceptionHandler,
 )
-from aio.loop._priv import _running_loop
-from aio.utils import MeasureElapsed, SignalHandlerInstaller
-
-if TYPE_CHECKING:
-    from aio.future import Coroutine, Future, Task
-    from aio.types import Logger
-
-_log = structlog.get_logger(__name__)
-
+from aio.loop._priv import running_loop
+from aio.types import Logger
+from aio.utils import MeasureElapsed, SignalHandlerInstaller, get_logger
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")
@@ -50,7 +45,7 @@ def _report_loop_callback_error(
     task: Task[Any] | None = None,
     future: Task[Any] | None = None,
     /,
-    logger: Logger = _log,
+    logger: Logger = get_logger(),
     **context: Any,
 ) -> None:
     logger = logger.bind(**context)
@@ -98,8 +93,8 @@ class BaseEventLoop(EventLoop):
         logger: Logger | None = None,
         debug: bool = _LOOP_DEBUG,
     ) -> None:
-        logger = logger or _log
-        self._logger = logger.bind(component="event-loop", loop_id=id(self))
+        logger = logger or get_logger()
+        self._logger = logger.bind(component="event-loop")
 
         self._scheduler = scheduler or Scheduler()
         self._selector = selector
@@ -112,6 +107,7 @@ class BaseEventLoop(EventLoop):
         self._debug = debug
 
         self._cached_networking: Networking | None = None
+        self._cached_executor: Executor | None = None
 
     def run_step(self) -> None:
         self._logger.debug("Running loop step...")
@@ -196,7 +192,9 @@ class BaseEventLoop(EventLoop):
                 elapsed=measure_callbacks.get_elapsed(),
             )
 
-        self._logger.debug("Loop step done", total_elapsed=self._clock.now() - at_start)
+        self._logger.debug(
+            "Loop step done", total_elapsed=datetime.timedelta(seconds=self._clock.now() - at_start)
+        )
 
     def _invoke_callback(
         self,
@@ -218,7 +216,7 @@ class BaseEventLoop(EventLoop):
         *args: CPS.args,
         **callback_context: Any,
     ) -> None:
-        token = _running_loop.set(self)
+        token = running_loop.set(self)
         try:
             callback(*args)
         except Exception as err:
@@ -227,7 +225,7 @@ class BaseEventLoop(EventLoop):
             self._exception_handler(err, cb=callback, **callback_context)
             raise
         finally:
-            _running_loop.reset(token)
+            running_loop.reset(token)
 
     def _invoke_handle(self, cv_context: contextvars.Context, handle: Handle) -> None:
         if handle.cancelled:
@@ -254,6 +252,17 @@ class BaseEventLoop(EventLoop):
                 finally:
                     self._cached_networking = None
 
+    @asynccontextmanager
+    async def create_executor(self) -> AsyncIterator[Executor]:
+        from aio.components.executor import concurrent_executor_factory
+
+        if self._cached_executor:
+            yield self._cached_executor
+        else:
+            async with concurrent_executor_factory(self._selector) as executor:
+                self._cached_executor = executor
+                yield executor
+
     def call_soon(
         self,
         target: Callable[CPS, None],
@@ -267,7 +276,7 @@ class BaseEventLoop(EventLoop):
                 callback_args=args,
             )
 
-        handle = Handle(None, target, args, False, context or {})
+        handle = Handle(None, target, args, False, False, context or {})
         self._scheduler.enqueue(handle)
         return handle
 
@@ -290,35 +299,38 @@ class BaseEventLoop(EventLoop):
                 call_at=call_at,
             )
 
-        handle = Handle(call_at, target, args, False, context or {})
+        handle = Handle(call_at, target, args, False, False, context or {})
         self._scheduler.enqueue(handle)
         return handle
 
     def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
         from aio.future import _create_task
 
-        root_task = _create_task(coroutine, _loop=self)
-        received_fut: Future[T] | None = None
-
         def receive_result(fut: Future[T]) -> None:
             nonlocal received_fut
             received_fut = fut
 
-        def on_keyboard_interrupt(*_: Any) -> None:
-            self._logger.debug("Keyboard interrupt request arrived")
-            raise KeyboardCanceled
+        def on_keyboard_interrupt(*args: object) -> None:
+            if root_task.is_finished:
+                return
 
+            try:
+                root_task.cancel(KeyboardCancelled())
+            except SelfCancelForbidden as exc:
+                raise KeyboardCancelled from exc
+
+            self._selector.wakeup_thread_safe()
+
+        received_fut: Future[T] | None = None
+        root_task = _create_task(coroutine, _loop=self, label="main-task")
         root_task.add_callback(receive_result)
 
         with SignalHandlerInstaller(signal.SIGINT, on_keyboard_interrupt):
-            for _ in count():
+            while received_fut is None:
                 try:
                     self.run_step()
-                except KeyboardCanceled:
+                except KeyboardCancelled:
                     raise
-                if received_fut:
-                    break
 
         assert root_task.is_finished
-        assert received_fut is not None
         return received_fut.result()

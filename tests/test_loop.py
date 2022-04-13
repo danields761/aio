@@ -324,26 +324,26 @@ class TestLoopStepping:
 
     def test_sets_running_loop_cv_in_handle_callback(self, make_loop):
         with pytest.raises(LookupError):
-            aio.loop._priv._running_loop.get()
+            aio.loop._priv.running_loop.get()
 
         @mock_wraps
         def handle_cb():
-            assert aio.loop._priv._running_loop.get() is loop
+            assert aio.loop._priv.running_loop.get() is loop
 
         loop = make_loop(Scheduler([Handle(None, handle_cb)]))
         loop.run_step()
         assert handle_cb.mock_calls == [call()]
 
         with pytest.raises(LookupError):
-            aio.loop._priv._running_loop.get()
+            aio.loop._priv.running_loop.get()
 
     def test_sets_running_loop_cv_in_io_callback(self, make_loop, selector):
         with pytest.raises(LookupError):
-            aio.loop._priv._running_loop.get()
+            aio.loop._priv.running_loop.get()
 
         @mock_wraps
         def io_callback(*_):
-            assert aio.loop._priv._running_loop.get() is loop
+            assert aio.loop._priv.running_loop.get() is loop
 
         selector.select = lambda *_: [(io_callback, 0, 0)]
 
@@ -353,7 +353,7 @@ class TestLoopStepping:
         assert io_callback.mock_calls == [call(0, 0)]
 
         with pytest.raises(LookupError):
-            aio.loop._priv._running_loop.get()
+            aio.loop._priv.running_loop.get()
 
 
 class TestLoopRun:
@@ -401,7 +401,7 @@ class TestLoopRun:
         loop.run(root())
         assert should_be_called.mock_calls == [call()]
 
-    def test_changes_sigint_to_cancelled(self, loop):
+    def test_changes_sigint_to_cancelled_v1(self, loop):
         should_be_called = Mock()
         should_not_be_called = Mock()
 
@@ -414,7 +414,27 @@ class TestLoopRun:
 
             should_not_be_called()
 
-        with pytest.raises(aio.Cancelled):
+        with pytest.raises(aio.KeyboardCancelled):
+            loop.run(root())
+
+        assert should_be_called.mock_calls == [call()]
+        assert should_not_be_called.mock_calls == []
+
+    def test_changes_sigint_to_cancelled_v2(self, loop):
+        should_be_called = Mock()
+        should_not_be_called = Mock()
+
+        async def root():
+            should_be_called()
+            # Probably wont work in a lot of cases and may cause wired behaviour
+            loop_ = await aio.loop.get_running()
+            loop_.call_soon(os.kill, os.getpid(), signal.SIGINT)
+            # Suspend coroutine to initialize further processing
+            await aio.sleep(10)
+
+            should_not_be_called()
+
+        with pytest.raises(aio.KeyboardCancelled):
             loop.run(root())
 
         assert should_be_called.mock_calls == [call()]
@@ -491,7 +511,7 @@ class TestEntryRun:
 
             gc.collect()
 
-        with pytest.WarningsRecorder() as warn_info:
+        with pytest.warns() as warn_info:
             aio.run(
                 root(),
                 selector_factory=selector_factory,

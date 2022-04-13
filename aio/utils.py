@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import datetime
+import inspect
 import signal
 import sys
 import types
 import warnings
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Type
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Coroutine, Type
 from weakref import WeakSet
+
+import loguru
 
 if TYPE_CHECKING:
     from aio.interfaces import Clock
+    from aio.types import Logger
 
 
 def _emit_undone_async_gen_warn(async_gen: AsyncGenerator[Any, Any], stack_level: int = 0) -> None:
@@ -96,10 +101,13 @@ class MeasureElapsed:
         self._last_enter_at: float | None = None
         self._clock = clock
 
-    def get_elapsed(self) -> float:
+    def get_elapsed(self) -> datetime.timedelta:
         if self._last_enter_at is None:
             raise RuntimeError("Measure not started")
-        return self._clock.now() - self._last_enter_at
+        return datetime.timedelta(seconds=self._clock.now() - self._last_enter_at)
+
+    def get_elapsed_sec(self) -> float:
+        return self.get_elapsed() / datetime.timedelta(seconds=1)
 
     def __enter__(self) -> MeasureElapsed:
         self._last_enter_at = self._clock.now()
@@ -112,3 +120,11 @@ class MeasureElapsed:
         exc_tb: types.TracebackType | None,
     ) -> bool | None:
         return None
+
+
+def is_coro_running(coro: Coroutine[Any, Any, Any]) -> bool:
+    return inspect.getcoroutinestate(coro) in {inspect.CORO_RUNNING, inspect.CORO_SUSPENDED}
+
+
+def get_logger() -> Logger:
+    return loguru.logger

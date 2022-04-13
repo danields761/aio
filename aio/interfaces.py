@@ -1,29 +1,33 @@
 from __future__ import annotations
 
+import abc
 import dataclasses
 import socket
+from enum import IntEnum
 from typing import (
-    TYPE_CHECKING,
     Any,
     AsyncContextManager,
     Callable,
     ContextManager,
     Coroutine,
+    Generator,
+    Generic,
+    Literal,
     Mapping,
     ParamSpec,
     Protocol,
     TypeVar,
 )
 
-if TYPE_CHECKING:
-    from aio.future import Future
+from aio import Cancelled
+from aio.types import HasFileno
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")
 CallbackType = Callable[..., None]
 
 
-class Clock(Protocol):
+class Clock(abc.ABC):
     def now(self) -> float:
         raise NotImplementedError
 
@@ -36,7 +40,7 @@ class IOEventCallback(Protocol):
         raise NotImplementedError
 
 
-class IOSelector(Protocol):
+class IOSelector(abc.ABC):
     def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int]]:
         raise NotImplementedError
 
@@ -73,7 +77,7 @@ class LoopFactory(Protocol):
         raise NotImplementedError
 
 
-class EventLoop(Protocol):
+class EventLoop(abc.ABC):
     def call_soon(
         self,
         target: Callable[CPS, None],
@@ -122,11 +126,93 @@ class EventLoop(Protocol):
         raise NotImplementedError
 
 
+class FutureResultCallback(Protocol[T]):
+    def __call__(self, fut: Future[T], /) -> None:
+        raise NotImplementedError
+
+
+class Promise(abc.ABC, Generic[T]):
+    @abc.abstractmethod
+    def set_result(self, val: T) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def set_exception(self, exc: BaseException, /) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def cancel(self, msg: Cancelled | str | None = None, /) -> None:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def future(self) -> Future[T]:
+        raise NotImplementedError
+
+
+class Future(abc.ABC, Generic[T]):
+    class State(IntEnum):
+        created = 0
+        scheduled = 1
+        running = 2
+        finished = 4
+
+    @property
+    @abc.abstractmethod
+    def state(self) -> Future.State:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def loop(self) -> EventLoop:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def result(self) -> T:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def exception(self) -> BaseException | None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def add_callback(self, cb: FutureResultCallback[T]) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def remove_callback(self, cb: FutureResultCallback[T]) -> None:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def is_finished(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def is_cancelled(self) -> bool:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def __await__(self) -> Generator[Future[Any], None, T]:
+        raise NotImplementedError
+
+
+class Task(Future[T], abc.ABC, Generic[T]):
+    @abc.abstractmethod
+    def cancel(self, exc: str | Cancelled | None = None) -> None:
+        raise NotImplementedError
+
+
 class Executor(Protocol):
     async def execute_sync_callable(
         self, fn: Callable[CPS, T], /, *args: CPS.args, **kwargs: CPS.kwargs
     ) -> T:
         raise NotImplementedError
+
+
+#: Any socket like object, either FD, or file-like object or socket
+SocketLike = int | HasFileno | socket.socket
 
 
 #: Socket address type, which could be passed into `socket.connect` and
@@ -135,20 +221,15 @@ class Executor(Protocol):
 SocketAddress = str | bytes | tuple[Any, ...]
 
 
-class Networking(Protocol):
-    async def wait_sock_ready_to_read(self, sock: socket.socket) -> None:
+class Networking(abc.ABC):
+    async def wait_sock_event(
+        self, sock: SocketLike, *events: Literal["read", "write"], label: str | None = None
+    ) -> None:
         """
 
         :param sock:
-        :return:
-        :raises SocketMustBeNonBlockingError: if given socket not in non-blocking mode
-        """
-        raise NotImplementedError
-
-    async def wait_sock_ready_to_write(self, sock: socket.socket) -> None:
-        """
-
-        :param sock:
+        :param events:
+        :param label:
         :return:
         :raises SocketMustBeNonBlockingError: if given socket not in non-blocking mode
         """
@@ -173,7 +254,7 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_read(self, sock: socket.socket, amount: int) -> bytes:
+    async def sock_read(self, sock: SocketLike, amount: int) -> bytes:
         """
 
         :param sock:
@@ -183,7 +264,17 @@ class Networking(Protocol):
         """
         raise NotImplementedError
 
-    async def sock_write(self, sock: socket.socket, data: bytes) -> None:
+    async def sock_write(self, sock: SocketLike, data: bytes) -> int:
+        """
+
+        :param sock:
+        :param data:
+        :return: written bytes before block
+        :raises SocketMustBeNonBlockingError: if given socket not in non-blocking mode
+        """
+        raise NotImplementedError
+
+    async def sock_write_all(self, sock: SocketLike, data: bytes) -> None:
         """
 
         :param sock:

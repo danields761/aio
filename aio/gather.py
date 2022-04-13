@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterable, AsyncIterator
 
-from aio.future import Future
+from aio.interfaces import Future
 from aio.queue import Queue
 
 

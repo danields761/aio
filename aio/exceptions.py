@@ -35,8 +35,29 @@ class Cancelled(BaseException):
         return isinstance(other, type(self)) and self.args == other.args
 
 
-class KeyboardCanceled(Cancelled):
+class KeyboardCancelled(Cancelled):
     pass
+
+
+class CancelledByChild(Cancelled):
+    pass
+
+
+class CancelledByParent(Cancelled):
+    pass
+
+
+class SelfCancelForbidden(RuntimeError):
+    """
+    It is forbidden to cancel current task via `cancel` method,
+    raise `aio.Cancelled` directly instead.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "It is forbidden to cancel current task via `cancel` method, "
+            "raise `aio.Cancelled` directly instead."
+        )
 
 
 def create_multi_error(msg: str | None, *children: BaseException) -> MultiError:
