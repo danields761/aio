@@ -359,13 +359,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
             handle=self._loop.call_soon(self._execute_coroutine_step),
         )
 
-    def _schedule_step(self, _: Future[Any] | None = None) -> None:
-        if not isinstance(self._state, _RunningState):
-            raise RuntimeError("Could not schedule task step for non-running task")
-
-        self._loop.call_soon(self._execute_coroutine_step)
-
-    def _execute_coroutine_step(self) -> None:
+    def _execute_coroutine_step(self, _: Future[Any] | None = None) -> None:
         if not isinstance(self._state, _ScheduledState | _RunningState):
             raise RuntimeError("Trying to resume finished task")
 
@@ -382,7 +376,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
                 return
         finally:
             if isinstance(self._state, _RunningState):
-                self._state.waiting_on.remove_callback(self._schedule_step)
+                self._state.waiting_on.remove_callback(self._execute_coroutine_step)
 
         if future is self:
             raise RuntimeError(
@@ -397,7 +391,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
                 "does not belong to the same loop"
             )
 
-        future.add_callback(self._schedule_step)
+        future.add_callback(self._execute_coroutine_step)
         self._state = _RunningState(
             result_callbacks=self._state.result_callbacks,
             coroutine=self._state.coroutine,
@@ -432,7 +426,7 @@ async def get_current_task() -> Task[Any]:
 
 def _create_promise(
     label: str | None = None, *, _loop: EventLoop | None = None, **context: Any
-) -> Promise[T]:
+) -> _FuturePromise[T]:
     if _loop is None:
         _loop = get_running_loop()
     future: _Future[T] = _Future(_loop, label=label, **context)
@@ -444,7 +438,7 @@ def _create_task(
     label: str | None = None,
     *,
     _loop: EventLoop | None = None,
-) -> Task[T]:
+) -> _Task[T]:
     if _loop is None:
         _loop = get_running_loop()
     task = _Task(coro, _loop, label=label)
