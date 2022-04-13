@@ -232,7 +232,7 @@ summary = "A small Python utility to set file creation time on Windows"
 
 [metadata]
 lock_version = "3.1"
-content_hash = "sha256:4099c1b2af2466f44284a6b549ee68e916b66526ddd545292406949231c0c137"
+content_hash = "sha256:0da8af3cdd7b5de7391675d76aecefc7539dd9f04329b9183755fa15559d42f6"
 
 [metadata.files]
 "atomicwrites 1.4.0" = [

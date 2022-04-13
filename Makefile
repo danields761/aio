@@ -19,6 +19,7 @@ lint:
 	-$(PDM) run flake8 $(SERVICE_NAME)/ tests/
 
 format:
+	-$(PDM) run python scripts/gen_all.py aio/__init__.py
 	-$(PDM) run black $(SERVICE_NAME)/ tests/
 	-$(PDM) run isort $(SERVICE_NAME)/ tests/
 
