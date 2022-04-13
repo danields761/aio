@@ -235,6 +235,8 @@ class BaseEventLoop(EventLoop):
             return
 
         self._invoke_callback(cv_context, handle.callback, *handle.args)
+        # Mark handle as executed after actual execution despite result
+        handle.executed = True
 
     @property
     def clock(self) -> Clock:

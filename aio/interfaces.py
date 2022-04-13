@@ -60,6 +60,7 @@ class Handle:
     when: float | None
     callback: CallbackType
     args: tuple[Any, ...] = ()
+    executed: bool = False
     cancelled: bool = False
     context: Mapping[str, Any] = dataclasses.field(default_factory=dict)
 

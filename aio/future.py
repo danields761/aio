@@ -69,12 +69,16 @@ class Future(abc.ABC, Generic[T]):
         created = 0
         scheduled = 1
         running = 2
-        finishing = 3
         finished = 4
 
     @property
     @abc.abstractmethod
     def state(self) -> Future.State:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def loop(self) -> EventLoop:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -109,7 +113,7 @@ class Future(abc.ABC, Generic[T]):
 
 
 class _FuturePromise(Promise[T]):
-    def __init__(self, future: Future[T]) -> None:
+    def __init__(self, future: _PureFuture[T]) -> None:
         self._fut = future
 
     def set_result(self, val: T) -> None:
@@ -155,7 +159,7 @@ class _FailedState:
     scheduled_cbs: dict[int, Handle]
 
 
-class _SimpleFuture(Future[T], Generic[T]):
+class _PureFuture(Future[T], Generic[T]):
     def __init__(self, loop: EventLoop, label: str | None = None, **context: Any) -> None:
         self._state: _PendingState[T] | _SuccessState[T] | _FailedState = _PendingState(
             result_callbacks={}
@@ -180,14 +184,19 @@ class _SimpleFuture(Future[T], Generic[T]):
             case _:
                 assert False
 
+    @property
+    def loop(self) -> EventLoop:
+        return self._loop
+
     def result(self) -> T:
         match self._state:
             case _PendingState():
                 raise FutureNotReady
             case _SuccessState(result=result):
                 return result
-            case _FailedState(exc=exc):
-                raise exc
+            case _FailedState() as state:
+                state.exc_retrieved = True
+                raise state.exc
             case _:
                 assert False
 
@@ -256,6 +265,9 @@ class _SimpleFuture(Future[T], Generic[T]):
                 "Both result value and exception given, but they are mutually exclusive"
             )
 
+        if not isinstance(self._state, _PendingState):
+            raise FutureFinishedError
+
         scheduled_cbs = self._schedule_callbacks()
         if val is not _Sentry.not_set:
             self._state = _SuccessState(result=val, scheduled_cbs=scheduled_cbs)
@@ -315,42 +327,110 @@ class _SimpleFuture(Future[T], Generic[T]):
 _current_task: contextvars.ContextVar[Task[Any]] = contextvars.ContextVar("current-task")
 
 
-class Task(Future[T]):
+@dataclass(frozen=True, kw_only=True)
+class _BaseTaskState(_PendingState[T], Generic[T]):
+    expect_coro_state: str
+    coroutine: Coroutine[Future[Any], None, T]
+
+    def __post_init__(self) -> None:
+        coro_state = inspect.getcoroutinestate(self.coroutine)
+        expect_state = self.expect_coro_state
+        if coro_state != expect_state:
+            raise RuntimeError(
+                "Inconsistent task state: "
+                f"coroutine in state {coro_state!r}, but {expect_state!r} expected"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CreatedState(_BaseTaskState[T], Generic[T]):
+    expect_coro_state: Literal["CORO_CREATED"] = "CORO_CREATED"
+
+
+@dataclass(frozen=True, kw_only=True)
+class _ScheduledState(_BaseTaskState[T], Generic[T]):
+    handle: Handle
+    expect_coro_state: Literal["CORO_CREATED"] = "CORO_CREATED"
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RunningState(_BaseTaskState[T], Generic[T]):
+    waiting_on: _PureFuture[Any]
+    expect_coro_state: Literal["CORO_SUSPENDED"] = "CORO_SUSPENDED"
+
+
+_TaskState = (
+    _CreatedState[T] | _ScheduledState[T] | _RunningState[T] | _SuccessState[T] | _FailedState
+)
+
+
+class Task(_PureFuture[T]):
     def __init__(
         self, coroutine: Coroutine[Future[Any], None, T], loop: EventLoop, label: str | None = None
     ) -> None:
-        if not inspect.iscoroutine(coroutine):
-            raise TypeError(f"Coroutine object is expected, not `{coroutine}`")
-
         super().__init__(loop, label, task=self, future=None)
+        self._state: _TaskState = _CreatedState(result_callbacks={}, coroutine=coroutine)
 
-        self._coroutine = coroutine
-        self._waiting_on: Future[Any] | None = None
-        self._pending_cancellation = False
-        self._state = Future.State.created
-        self._started_promise: Promise[None] = _create_promise(
-            "task-started-future", _loop=loop, served_task=self
-        )
+    @property
+    def state(self) -> Future.State:
+        match self._state:
+            case _CreatedState():
+                return Future.State.created
+            case _ScheduledState():
+                return Future.State.scheduled
+            case _RunningState():
+                return Future.State.running
+            case _:
+                return super().state
 
-    def _cancel(self, msg: str | None = None) -> None:
-        if self.is_finished:
+    def _set_result(
+        self, val: T | Literal[_Sentry.not_set] = _Sentry.not_set, exc: BaseException | None = None
+    ) -> None:
+        if isinstance(self._state, _RunningState) and is_coro_running(self._state.coroutine):
+            raise RuntimeError(
+                f"Attempt to finish task before it coroutine finished, task {self!r}. "
+                "Setting task result allowed either when coroutine finished normally, or "
+                "if it not started."
+            )
+
+        super()._set_result(val, exc)
+
+    def _cancel(self, msg: str | None = None, exc: Cancelled | None = None) -> None:
+        if not isinstance(self._state, _PendingState):
             raise FutureFinishedError
 
-        self._state = Future.State.finishing
+        match self._state:
+            case _ScheduledState(handle=handle):
+                assert not handle.executed, "Handle being executed, but state not changed"
+                # Cancel scheduled first step
+                handle.cancel()
+                super()._cancel(msg, exc=exc)
+            case _RunningState(waiting_on=waiting_on):
+                # Recursively cancel all inner tasks
+                waiting_on._cancel(msg=msg, exc=exc)
+            case _CreatedState() | _:
+                super()._cancel(msg=msg, exc=exc)
 
-        if self._waiting_on:
-            # Recursively cancel all inner tasks
-            self._waiting_on._cancel(msg)
-        else:
-            # TODO Check coroutine finished or not started
-            super()._cancel(msg)
+    def _schedule_first_step(self) -> None:
+        if not isinstance(self._state, _CreatedState):
+            raise RuntimeError("Only newly created tasks can be scheduled for first step")
 
-    def _schedule_execution(self, _: Future[Any] | None = None) -> None:
+        self._state = _ScheduledState(
+            self._state.result_callbacks,
+            coroutine=self._state.coroutine,
+            handle=self._loop.call_soon(self._execute_coroutine_step),
+        )
+
+    def _schedule_step(self, _: Future[Any] | None = None) -> None:
+        if not isinstance(self._state, _RunningState):
+            raise RuntimeError("Could not schedule task step for non-running task")
+
         self._loop.call_soon(self._execute_coroutine_step)
-        if self._state == Future.State.created:
-            self._state = Future.State.scheduled
 
     def _execute_coroutine_step(self) -> None:
+        if not isinstance(self._state, _ScheduledState | _RunningState):
+            raise RuntimeError("Trying to resume finished task")
+
         cv_context = contextvars.copy_context()
         try:
             try:
@@ -363,12 +443,8 @@ class Task(Future[T]):
                 self._set_result(exc=exc)
                 return
         finally:
-            if self._waiting_on:
-                self._waiting_on.remove_callback(self._schedule_execution)
-
-        if self._state == Future.State.scheduled:
-            self._state = Future.State.running
-            self._started_promise.set_result(None)
+            if isinstance(self._state, _RunningState):
+                self._state.waiting_on.remove_callback(self._schedule_step)
 
         if future is self:
             raise RuntimeError(
@@ -383,34 +459,27 @@ class Task(Future[T]):
                 "does not belong to the same loop"
             )
 
-        future.add_callback(self._schedule_execution)
-        self._waiting_on = future
+        future.add_callback(self._schedule_step)
+        self._state = _RunningState(
+            result_callbacks=self._state.result_callbacks,
+            coroutine=self._state.coroutine,
+            waiting_on=future,
+        )
 
-    def _set_result(
-        self, val: T | Literal[_Sentry.not_set] = _Sentry.not_set, exc: BaseException | None = None
-    ) -> None:
-        super()._set_result(val, exc)
-        if not self._started_promise.future.is_finished:
-            self._started_promise.set_result(None)
+    def _send_to_coroutine_within_new_context(self) -> _PureFuture[Any]:
+        assert isinstance(self._state, _ScheduledState | _RunningState)
 
-    def _send_to_coroutine_within_new_context(self) -> Future[Any]:
         reset_token = _current_task.set(self)
         try:
-            maybe_feature = self._coroutine.send(None)
-            if not isinstance(maybe_feature, Future):
+            maybe_feature = self._state.coroutine.send(None)
+            if not isinstance(maybe_feature, _PureFuture):
                 raise RuntimeError("All `aio` coroutines must yield and `Feature` instance")
             return maybe_feature
         finally:
             _current_task.reset(reset_token)
 
     def __repr__(self) -> str:
-        return (
-            "<Task "
-            f"label={self._label} "
-            f"state={self._state.name} "
-            f"for {self._coroutine!r}"
-            ">"
-        )
+        return f"<Task label={self._label} state={self.state!r} >"
 
 
 def _create_promise(
@@ -418,7 +487,7 @@ def _create_promise(
 ) -> Promise[T]:
     if _loop is None:
         _loop = _get_running_loop()
-    future: Future[T] = Future(_loop, label=label, **context)
+    future: _PureFuture[T] = _PureFuture(_loop, label=label, **context)
     return _FuturePromise(future)
 
 
@@ -431,5 +500,5 @@ def _create_task(
     if _loop is None:
         _loop = _get_running_loop()
     task = Task(coro, _loop, label=label)
-    task._schedule_execution()
+    task._schedule_first_step()
     return task

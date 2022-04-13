@@ -25,6 +25,10 @@ class FutureFinishedError(FutureError):
 
 class Cancelled(BaseException):
     def __init__(self, msg: str | None = None) -> None:
+        if msg:
+            super().__init__(msg)
+        else:
+            super().__init__()
         self.msg = msg
 
     def __eq__(self, other: Any) -> bool:
