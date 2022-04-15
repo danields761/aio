@@ -5,23 +5,19 @@ import selectors
 import socket
 from collections import defaultdict
 from contextlib import closing, contextmanager
-from typing import TYPE_CHECKING, Any, ContextManager, Iterator, cast
-
-import structlog
+from typing import TYPE_CHECKING, Any, ContextManager, Iterator, Literal, cast
 
 from aio.exceptions import SocketConfigurationError
 from aio.interfaces import (
     IOEventCallback,
     IOSelector,
     Networking,
+    Promise,
     SocketAddress,
+    SocketLike,
 )
-
-if TYPE_CHECKING:
-    from aio.future import Promise
-    from aio.types import Logger, STDSelector
-
-_log = structlog.get_logger(__name__)
+from aio.types import Logger, STDSelector
+from aio.utils import get_logger
 
 _SelectorKeyData = set[tuple[int, IOEventCallback]]
 
@@ -35,7 +31,7 @@ class _SelectorWakeupper:
     ) -> None:
         self._selector = selector
         self._receiver, self._sender = socket.socketpair()
-        self._logger = (logger or _log).bind(component="selector-wakeupper")
+        self._logger = (logger or get_logger()).bind(component="selector-wakeupper")
 
         self._init_self_pipe()
 
@@ -45,12 +41,7 @@ class _SelectorWakeupper:
         self._selector.register(
             self._receiver,
             selectors.EVENT_READ,
-            {
-                (
-                    selectors.EVENT_READ,
-                    cast(IOEventCallback, self._on_receiver_input),
-                )
-            },
+            {(selectors.EVENT_READ, self._on_receiver_input)},
         )
 
     def wakeup(self) -> None:
@@ -97,9 +88,7 @@ class SelectorsEventsSelector(IOSelector):
             This class owns selector object and takes care of finalization of it,
             thus the argument intended to be used in tests.
         """
-        self._selector: STDSelector[_SelectorKeyData] = selector or cast(
-            STDSelector[_SelectorKeyData], selectors.DefaultSelector()
-        )
+        self._selector: STDSelector[_SelectorKeyData] = selector or selectors.DefaultSelector()
         self._logger = (logger or _log).bind(component="selectors-event-selector")
 
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
@@ -135,12 +124,18 @@ class SelectorsEventsSelector(IOSelector):
         if (events is None) != (cb is None):
             raise ValueError("`events` and `cb` args must be both either defined or not")
         if events is None and cb is None:
-            self._selector.unregister(fd)
+            try:
+                self._selector.unregister(fd)
+            except KeyError:
+                pass
             return
 
         assert events is not None and cb is not None
 
-        key = self._selector.get_key(fd)
+        try:
+            key = self._selector.get_key(fd)
+        except KeyError:
+            return
         exists_need_events: int | None = None
         for reg_events, reg_cb in key.data:
             if reg_cb != cb:
@@ -154,7 +149,10 @@ class SelectorsEventsSelector(IOSelector):
                 key.data.add((new_need_events, cb))
 
         if len(key.data) == 0:
-            self._selector.unregister(fd)
+            try:
+                self._selector.unregister(fd)
+            except KeyError:
+                pass
 
     def wakeup_thread_safe(self) -> None:
         self._check_not_finalized()
@@ -184,13 +182,22 @@ class SelectorNetworking(Networking):
         self._managed_sockets_refs: defaultdict[int, int] = defaultdict(lambda: 0)
         self._waiters: set[Promise[Any]] = set()
 
-    async def wait_sock_ready_to_read(self, sock: socket.socket) -> None:
-        await self._wait_sock_events(sock, selectors.EVENT_READ, "read")
+    async def wait_sock_event(
+        self, sock: SocketLike, *events: Literal["read", "write"], label: str | None = None
+    ) -> None:
+        with self._manage_sock(sock) as fd:
+            int_events = 0
+            if "read" in events:
+                int_events |= selectors.EVENT_READ
+            if "write" in events:
+                int_events |= selectors.EVENT_WRITE
 
-    async def wait_sock_ready_to_write(self, sock: socket.socket) -> None:
-        await self._wait_sock_events(sock, selectors.EVENT_WRITE, "write")
+            if not label:
+                label = "-".join(events)
 
-    async def _wait_sock_events(self, sock: socket.socket, events: int, event_name: str) -> None:
+            return await self._wait_sock_events(fd, int_events, label)
+
+    async def _wait_sock_events(self, sock: int, events: int, event_name: str) -> None:
         from aio.future import _create_promise
 
         waiter: Promise[Any] = _create_promise(f"socket-{event_name}-waiter", sock=sock)
@@ -199,17 +206,17 @@ class SelectorNetworking(Networking):
             if not waiter.future.is_finished:
                 waiter.set_result(None)
 
-        self._selector.add_watch(sock.fileno(), events, done_cb)
+        self._selector.add_watch(sock, events, done_cb)
 
         self._waiters.add(waiter)
         try:
             await waiter.future
         finally:
             self._waiters.remove(waiter)
-            self._selector.stop_watch(sock.fileno(), events, done_cb)
+            self._selector.stop_watch(sock, events, done_cb)
 
     async def sock_connect(self, sock: socket.socket, addr: SocketAddress) -> None:
-        with self._manage_sock(sock):
+        with self._manage_sock(sock) as fd:
             while True:
                 try:
                     sock.connect(addr)
@@ -217,10 +224,10 @@ class SelectorNetworking(Networking):
                 except BlockingIOError:
                     pass
 
-                await self._wait_sock_events(sock, selectors.EVENT_WRITE, "connect")
+                await self._wait_sock_events(fd, selectors.EVENT_WRITE, "connect")
 
     async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, SocketAddress]:
-        with self._manage_sock(sock):
+        with self._manage_sock(sock) as fd:
             while True:
                 try:
                     conn, addr = sock.accept()
@@ -231,28 +238,43 @@ class SelectorNetworking(Networking):
                     self._managed_sockets_refs[conn.fileno()] += 1
                     return conn, addr
 
-                await self._wait_sock_events(sock, selectors.EVENT_READ, "accept")
+                await self._wait_sock_events(fd, selectors.EVENT_READ, "accept")
 
-    async def sock_read(self, sock: socket.socket, amount: int) -> bytes:
-        with self._manage_sock(sock):
+    async def sock_read(self, sock: SocketLike, amount: int) -> bytes:
+        with self._manage_sock(sock) as fd:
             while True:
                 try:
                     return sock.recv(amount)
                 except BlockingIOError:
                     pass
 
-                await self.wait_sock_ready_to_read(sock)
+                await self._wait_sock_events(fd, selectors.EVENT_READ, "read")
 
-    async def sock_write(self, sock: socket.socket, data: bytes) -> None:
-        with self._manage_sock(sock):
-            sent = 0
-            while sent != len(data):
+    async def sock_write(self, sock: SocketLike, data: bytes) -> int:
+        with self._manage_sock(sock) as fd:
+            while True:
                 try:
-                    sent += sock.send(data[sent:])
+                    return sock.send(data)
                 except BlockingIOError:
                     pass
 
-                await self.wait_sock_ready_to_write(sock)
+                await self._wait_sock_events(fd, selectors.EVENT_WRITE, "write")
+
+    async def sock_write_all(self, sock: SocketLike, data: bytes) -> None:
+        with self._manage_sock(sock) as fd:
+            sent = 0
+            while sent != len(data):
+                try:
+                    sent_l = sock.send(data[sent:])
+                    assert sent_l > 0
+                    sent += sent_l
+
+                    if sent == len(data):
+                        return
+                except BlockingIOError:
+                    pass
+
+                await self._wait_sock_events(fd, selectors.EVENT_WRITE, "write-all")
 
     def close(self) -> None:
         for waiter in self._waiters:
@@ -263,23 +285,33 @@ class SelectorNetworking(Networking):
                 self._selector.stop_watch(sock_fileno, None, None)
 
     @contextmanager
-    def _manage_sock(self, sock: socket.socket) -> Iterator[None]:
-        self._check_socket(sock)
-        sock_fileno = sock.fileno()
+    def _manage_sock(self, sock: SocketLike) -> Iterator[int]:
+        sock_fileno = self._check_socket(sock)
         self._managed_sockets_refs[sock_fileno] += 1
         try:
-            yield
+            yield sock_fileno
         finally:
             self._managed_sockets_refs[sock_fileno] -= 1
             if self._managed_sockets_refs[sock_fileno] <= 0:
                 del self._managed_sockets_refs[sock_fileno]
 
     @staticmethod
-    def _check_socket(sock: socket.socket) -> None:
-        if sock.fileno() is None or sock.fileno() <= 0:
-            raise SocketConfigurationError("Socket has invalid file-id")
-        if sock.getblocking():
-            raise SocketConfigurationError("Socket is blocking")
+    def _check_socket(sock: SocketLike) -> int:
+        match sock:
+            case int():
+                if sock <= 0:
+                    raise SocketConfigurationError("Socket has invalid file-id")
+                return sock
+            case socket.socket():
+                if sock.fileno() is None or sock.fileno() <= 0:
+                    raise SocketConfigurationError("Socket has invalid file-id")
+                if sock.getblocking():
+                    raise SocketConfigurationError("Socket is blocking")
+                return sock.fileno()
+            case _:
+                if sock.fileno() is None or sock.fileno() <= 0:
+                    raise SocketConfigurationError("Socket has invalid file-id")
+                return sock.fileno()
 
 
 def create_selectors_event_selector(

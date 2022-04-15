@@ -134,7 +134,11 @@ class _Future(Future[T], Generic[T]):
                 return result
             case _FailedState() as state:
                 state.exc_retrieved = True
-                raise state.exc
+                _, current_exc, _ = sys.exc_info()
+                if current_exc:
+                    raise state.exc from current_exc
+                else:
+                    raise state.exc
             case _:
                 assert False
 
@@ -526,4 +530,4 @@ async def _guard_task(task: _Task[T]) -> AsyncIterator[Task[T]]:
             pass
         except (Exception, Cancelled) as child_exc:
             if isinstance(parent_exc, CancelledByChild):
-                raise parent_exc from child_exc
+                raise child_exc

@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError
-from aio.funcs import get_loop
-from aio.future import Promise, _create_promise
-from aio.interfaces import Executor, IOSelector
+from aio.future import _create_promise
+from aio.interfaces import Executor, IOSelector, Promise
+from aio.loop import get_running
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")
@@ -26,7 +26,7 @@ def _ignore_feature_finished_error(
 async def _stupid_execute_on_thread(
     fn: Callable[CPS, Any], name: str, /, *args: CPS.args, **kwargs: CPS.kwargs
 ) -> None:
-    loop = await get_loop()
+    loop = await get_running()
 
     waiter: Promise[None] = _create_promise("thread-waiter")
 
@@ -52,7 +52,7 @@ class ConcurrentExecutor(Executor):
     async def execute_sync_callable(
         self, fn: Callable[CPS, T], /, *args: CPS.args, **kwargs: CPS.kwargs
     ) -> T:
-        loop = await get_loop()
+        loop = await get_running()
         cfuture = self._executor.submit(fn, args)
         waiter: Promise[T] = _create_promise(label="executor-waiter")
 
