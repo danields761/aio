@@ -4,34 +4,22 @@ import contextvars
 import datetime
 import os
 import signal
-from contextlib import asynccontextmanager
 from functools import partial
-from typing import (
-    Any,
-    AsyncIterator,
-    Callable,
-    ContextManager,
-    Coroutine,
-    Mapping,
-    ParamSpec,
-    TypeVar,
-)
+from typing import Any, Callable, Coroutine, Mapping, ParamSpec, TypeVar
 
-from aio.components.clock import MonotonicClock
-from aio.components.scheduler import Scheduler
 from aio.exceptions import KeyboardCancelled, SelfCancelForbidden
 from aio.interfaces import (
     Clock,
     EventLoop,
-    Executor,
     Future,
     Handle,
     IOSelector,
-    Networking,
     Task,
     UnhandledExceptionHandler,
 )
 from aio.loop._priv import running_loop
+from aio.loop.pure.clock import MonotonicClock
+from aio.loop.pure.scheduler import Scheduler
 from aio.types import Logger
 from aio.utils import MeasureElapsed, SignalHandlerInstaller, get_logger
 
@@ -85,7 +73,6 @@ class BaseEventLoop(EventLoop):
     def __init__(
         self,
         selector: IOSelector,
-        networking_factory: Callable[[], ContextManager[Networking]],
         *,
         clock: Clock = MonotonicClock(),
         scheduler: Scheduler | None = None,
@@ -98,16 +85,12 @@ class BaseEventLoop(EventLoop):
 
         self._scheduler = scheduler or Scheduler()
         self._selector = selector
-        self._networking_factory = networking_factory
         self._clock = clock
         self._exception_handler = exception_handler or partial(
             _report_loop_callback_error, logger=self._logger
         )
 
         self._debug = debug
-
-        self._cached_networking: Networking | None = None
-        self._cached_executor: Executor | None = None
 
     def run_step(self) -> None:
         self._logger.debug("Running loop step...")
@@ -239,29 +222,6 @@ class BaseEventLoop(EventLoop):
     @property
     def clock(self) -> Clock:
         return self._clock
-
-    @asynccontextmanager
-    async def create_networking(self) -> AsyncIterator[Networking]:
-        if self._cached_networking:
-            yield self._cached_networking
-        else:
-            with self._networking_factory() as networking:
-                self._cached_networking = networking
-                try:
-                    yield networking
-                finally:
-                    self._cached_networking = None
-
-    @asynccontextmanager
-    async def create_executor(self) -> AsyncIterator[Executor]:
-        from aio.components.executor import concurrent_executor_factory
-
-        if self._cached_executor:
-            yield self._cached_executor
-        else:
-            async with concurrent_executor_factory(self._selector) as executor:
-                self._cached_executor = executor
-                yield executor
 
     def call_soon(
         self,

@@ -2,15 +2,16 @@ import contextlib
 import gc
 import os
 import signal
-from unittest.mock import DEFAULT, MagicMock, Mock, call
+from unittest.mock import DEFAULT, MagicMock, Mock, call, patch
 
 import pytest
 
 import aio
 import aio.loop._priv
-from aio.components.scheduler import Scheduler
-from aio.interfaces import Clock, Handle, IOSelector
-from aio.loop import BaseEventLoop
+from aio.interfaces import Clock, Handle, IOSelector, LoopPolicy
+from aio.loop.pure import BaseEventLoop
+from aio.loop.pure.policy import BaseLoopPolicy
+from aio.loop.pure.scheduler import Scheduler
 from tests.utils import mock_wraps
 
 
@@ -22,6 +23,18 @@ def process_callback_exception(exc, **__) -> None:
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)
     pytest.fail("No unhandled exceptions is allowed inside callbacks during testing")
+
+
+@pytest.fixture(autouse=True)
+def set_loop_policy():
+    policy = Mock(LoopPolicy, wraps=BaseLoopPolicy())
+    policy.create_networking.side_effect = RuntimeError("Forbidden")
+    policy.create_executor.side_effect = RuntimeError("Forbidden")
+
+    loop_cfg = Mock()
+    loop_cfg.policy = policy
+    with patch.object(aio.loop._priv, "loop_global_cfg", loop_cfg):
+        yield
 
 
 @pytest.fixture
@@ -51,7 +64,6 @@ class TestLoopStepping:
     def make_loop(self, selector, clock):
         return lambda scheduler: BaseEventLoop(
             selector,
-            networking_factory=Mock(side_effect=Exception("Not exists.")),
             clock=clock,
             scheduler=scheduler,
             exception_handler=process_callback_exception,
@@ -359,7 +371,7 @@ class TestLoopStepping:
 class TestLoopRun:
     @pytest.fixture
     def loop(self, clock, selector):
-        return BaseEventLoop(selector, Mock(side_effect=Exception("Not exists")), clock=clock)
+        return BaseEventLoop(selector, clock=clock)
 
     def test_runs_simple_coroutine(self, loop):
         should_be_called = Mock()
@@ -442,19 +454,9 @@ class TestLoopRun:
 
 
 class TestEntryRun:
-    @pytest.fixture
-    def selector_factory(self):
-        selector = Mock(IOSelector, name="noop-selector")
-        selector.select.return_value = []
-
-        return lambda: contextlib.nullcontext(selector)
-
-    @pytest.fixture
-    def networking_factory(self):
-        return lambda: contextlib.nullcontext(Mock(name="noop-networking"))
-
     def test_should_warn_if_async_gen_being_gc_while_not_finished(
-        self, clock, selector_factory, networking_factory
+        self,
+        clock,
     ):
         should_be_called_in_root = Mock()
         should_be_called_in_gen = Mock()
@@ -476,11 +478,7 @@ class TestEntryRun:
             gc.collect()
 
         with pytest.warns(UserWarning) as warn_info:
-            aio.run(
-                root(),
-                selector_factory=selector_factory,
-                networking_factory=networking_factory,
-            )
+            aio.run(root())
 
         assert should_be_called_in_root.mock_calls == [call()]
         assert should_be_called_in_gen.mock_calls == [call()]
@@ -491,9 +489,7 @@ class TestEntryRun:
             for warn in warn_info.list
         )
 
-    def test_should_not_warn_if_async_gen_being_gc_after_finish(
-        self, clock, selector_factory, networking_factory
-    ):
+    def test_should_not_warn_if_async_gen_being_gc_after_finish(self, clock):
         should_be_called_in_root = Mock()
         should_be_called_in_gen = Mock()
 
@@ -512,11 +508,7 @@ class TestEntryRun:
             gc.collect()
 
         with pytest.WarningsRecorder(_ispytest=True) as warn_info:
-            aio.run(
-                root(),
-                selector_factory=selector_factory,
-                networking_factory=networking_factory,
-            )
+            aio.run(root())
 
         assert should_be_called_in_root.mock_calls == [call()]
         assert should_be_called_in_gen.mock_calls == [call(), call()]

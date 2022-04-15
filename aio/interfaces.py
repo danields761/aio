@@ -72,8 +72,17 @@ class Handle:
         self.cancelled = True
 
 
-class LoopFactory(Protocol):
-    def __call__(self, **kwargs: Any) -> ContextManager[EventLoop]:
+class LoopPolicy(abc.ABC):
+    @abc.abstractmethod
+    def create_loop(self, **kwargs: Any) -> ContextManager[EventLoop]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def create_networking(self) -> AsyncContextManager[Networking]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def create_executor(self) -> AsyncContextManager[Executor]:
         raise NotImplementedError
 
 
@@ -114,12 +123,6 @@ class EventLoop(abc.ABC):
 
     @property
     def clock(self) -> Clock:
-        raise NotImplementedError
-
-    def create_networking(self) -> AsyncContextManager[Networking]:
-        raise NotImplementedError
-
-    def create_executor(self) -> AsyncContextManager[Executor]:
         raise NotImplementedError
 
     def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:

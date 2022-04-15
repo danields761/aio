@@ -89,7 +89,7 @@ class SelectorsEventsSelector(IOSelector):
             thus the argument intended to be used in tests.
         """
         self._selector: STDSelector[_SelectorKeyData] = selector or selectors.DefaultSelector()
-        self._logger = (logger or _log).bind(component="selectors-event-selector")
+        self._logger = (logger or get_logger()).bind(component="selectors-event-selector")
 
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
         self._is_finalized = False
@@ -177,7 +177,7 @@ class SelectorNetworking(Networking):
         logger: Logger | None = None,
     ) -> None:
         self._selector = selector
-        self._logger = (logger or _log).bind(component="networking")
+        self._logger = (logger or get_logger()).bind(component="networking")
 
         self._managed_sockets_refs: defaultdict[int, int] = defaultdict(lambda: 0)
         self._waiters: set[Promise[Any]] = set()

@@ -20,6 +20,8 @@ lint:
 
 format:
 	-$(PDM) run python scripts/gen_all.py aio/__init__.py
+	-$(PDM) run python scripts/gen_all.py aio/loop/__init__.py
+	-$(PDM) run python scripts/gen_all.py aio/loop/pure/__init__.py
 	-$(PDM) run black $(SERVICE_NAME)/ tests/
 	-$(PDM) run isort $(SERVICE_NAME)/ tests/
 

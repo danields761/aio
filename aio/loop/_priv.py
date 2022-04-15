@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import contextvars
-from contextlib import contextmanager
-from functools import partial
-from typing import Any, Callable, ContextManager, Iterator
+import threading
+from typing import AsyncContextManager
 
-from aio.components.networking import create_selector_networking, create_selectors_event_selector
-from aio.interfaces import EventLoop, IOSelector, LoopFactory, Networking
-from aio.types import Logger
-from aio.utils import get_logger
+from aio.interfaces import EventLoop, Executor, LoopPolicy, Networking
 
 running_loop: contextvars.ContextVar[EventLoop] = contextvars.ContextVar("running-loop")
 
@@ -31,36 +27,31 @@ async def get_running() -> EventLoop:
         )
 
 
-@contextmanager
-def default_loop_factory(
-    *,
-    selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
-    networking_factory: Callable[[], ContextManager[Networking]] | None = None,
-    logger: Logger | None = None,
-    **loop_kwargs: Any,
-) -> Iterator[EventLoop]:
-    from aio.loop.pure import BaseEventLoop
-
-    logger = logger or get_logger()
-
-    if not selector_factory:
-        selector_factory = partial(create_selectors_event_selector, logger=logger)
-
-    with selector_factory() as selector:
-        if not networking_factory:
-            networking_factory = partial(create_selector_networking, selector, logger=logger)
-
-        loop = BaseEventLoop(selector, networking_factory, **loop_kwargs)
-        yield loop
+loop_global_cfg = threading.local()
 
 
-loop_factory_cv: LoopFactory = default_loop_factory
+def set_loop_policy(policy: LoopPolicy) -> None:
+    loop_global_cfg.policy = policy
 
 
-def set_loop_factory(loop_factory: LoopFactory) -> None:
-    global loop_factory_cv
-    loop_factory_cv = loop_factory
+def get_loop_policy() -> LoopPolicy:
+    try:
+        policy = loop_global_cfg.policy
+    except AttributeError:
+        from aio.loop.pure.policy import BaseLoopPolicy
+
+        set_loop_policy(BaseLoopPolicy())
+        return get_loop_policy()
+
+    if not isinstance(policy, LoopPolicy):
+        raise TypeError("Invalid loop policy", policy)
+
+    return policy
 
 
-def get_loop_factory() -> LoopFactory:
-    return loop_factory_cv
+def networking() -> AsyncContextManager[Networking]:
+    return get_loop_policy().create_networking()
+
+
+def executor() -> AsyncContextManager[Executor]:
+    return get_loop_policy().create_executor()

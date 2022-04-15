@@ -832,10 +832,8 @@ class TestScopedTask:
             call.parent_in_sleep_exception(
                 CancelledByChild("Child task finished with an exception")
             ),
-            call.parent_exception(CancelledByChild("Child task finished with an exception")),
+            call.parent_exception(child_exc),
             call.parent_finished(),
         ]
-        with pytest.raises(CancelledByChild):
+        with pytest.raises(Exception, match="Child exception"):
             parent_task.result()
-
-        assert parent_task.exception().__cause__ is child_exc

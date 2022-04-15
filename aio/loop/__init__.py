@@ -1,4 +1,3 @@
-from aio.loop._priv import get_loop_factory, get_running, set_loop_factory
-from aio.loop.pure import BaseEventLoop
+from aio.loop._priv import executor, get_loop_policy, get_running, networking, set_loop_policy
 
-__all__ = ["BaseEventLoop", "set_loop_factory", "get_loop_factory", "get_running"]
+__all__ = ["executor", "get_loop_policy", "get_running", "networking", "set_loop_policy"]
