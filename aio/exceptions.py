@@ -35,7 +35,7 @@ class Cancelled(BaseException):
         return isinstance(other, type(self)) and self.args == other.args
 
 
-class KeyboardCancelled(Cancelled):
+class KeyboardCancelled(Cancelled, KeyboardInterrupt):
     pass
 
 

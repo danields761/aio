@@ -9,11 +9,11 @@ from typing import (
     AsyncContextManager,
     Callable,
     ContextManager,
-    Coroutine,
     Generator,
     Generic,
     Literal,
     Mapping,
+    NoReturn,
     ParamSpec,
     Protocol,
     TypeVar,
@@ -72,9 +72,16 @@ class Handle:
         self.cancelled = True
 
 
-class LoopPolicy(abc.ABC):
+LoopT = TypeVar("LoopT", bound="EventLoop")
+
+
+class LoopPolicy(abc.ABC, Generic[LoopT]):
     @abc.abstractmethod
-    def create_loop(self, **kwargs: Any) -> ContextManager[EventLoop]:
+    def create_loop(self, **kwargs: Any) -> ContextManager[LoopT]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def create_loop_runner(self, loop: LoopT) -> LoopRunner[LoopT]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -83,6 +90,24 @@ class LoopPolicy(abc.ABC):
 
     @abc.abstractmethod
     def create_executor(self) -> AsyncContextManager[Executor]:
+        raise NotImplementedError
+
+
+class LoopStopped(Exception):
+    pass
+
+
+LoopT_cov = TypeVar("LoopT_cov", covariant=True, bound="EventLoop")
+
+
+class LoopRunner(abc.ABC, Generic[LoopT_cov]):
+    def get_loop(self) -> LoopT_cov:
+        raise NotImplementedError
+
+    def run_loop(self) -> NoReturn:
+        raise NotImplementedError
+
+    def stop_loop(self) -> None:
         raise NotImplementedError
 
 
@@ -123,9 +148,6 @@ class EventLoop(abc.ABC):
 
     @property
     def clock(self) -> Clock:
-        raise NotImplementedError
-
-    def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
         raise NotImplementedError
 
 

@@ -8,9 +8,8 @@ import pytest
 
 import aio
 import aio.loop._priv
-from aio.interfaces import Clock, Handle, IOSelector, LoopPolicy
-from aio.loop.pure import BaseEventLoop
-from aio.loop.pure.policy import BaseLoopPolicy
+from aio.interfaces import Clock, Handle, LoopPolicy, LoopStopped
+from aio.loop.pure import BaseEventLoop, BaseLoopRunner
 from aio.loop.pure.scheduler import Scheduler
 from tests.utils import mock_wraps
 
@@ -23,18 +22,6 @@ def process_callback_exception(exc, **__) -> None:
 
     traceback.print_exception(type(exc), exc, exc.__traceback__)
     pytest.fail("No unhandled exceptions is allowed inside callbacks during testing")
-
-
-@pytest.fixture(autouse=True)
-def set_loop_policy():
-    policy = Mock(LoopPolicy, wraps=BaseLoopPolicy())
-    policy.create_networking.side_effect = RuntimeError("Forbidden")
-    policy.create_executor.side_effect = RuntimeError("Forbidden")
-
-    loop_cfg = Mock()
-    loop_cfg.policy = policy
-    with patch.object(aio.loop._priv, "loop_global_cfg", loop_cfg):
-        yield
 
 
 @pytest.fixture
@@ -51,12 +38,28 @@ def selector(clock):
 
     def selector_select(time_):
         if time_ is None:
-            return
+            return []
         clock.now.return_value += time_
         return []
 
     selector.select = Mock(wraps=selector_select)
     return selector
+
+
+@pytest.fixture
+def loop_policy(selector, clock):
+    @contextlib.contextmanager
+    def create_loop():
+        yield BaseEventLoop(selector, clock=clock)
+
+    policy = Mock(LoopPolicy)
+    policy.create_loop = create_loop
+    policy.create_loop_runner = lambda loop: BaseLoopRunner(loop)
+    policy.create_networking.side_effect = RuntimeError("Forbidden")
+    policy.create_executor.side_effect = RuntimeError("Forbidden")
+
+    with patch.object(aio.loop._priv.loop_global_cfg, "policy", policy, create=True):
+        yield policy
 
 
 class TestLoopStepping:
@@ -368,37 +371,92 @@ class TestLoopStepping:
             aio.loop._priv.running_loop.get()
 
 
-class TestLoopRun:
+class TestLoopRunner:
     @pytest.fixture
-    def loop(self, clock, selector):
-        return BaseEventLoop(selector, clock=clock)
+    def loop(self, loop_policy):
+        with loop_policy.create_loop() as loop:
+            yield loop
 
-    def test_runs_simple_coroutine(self, loop):
+    @pytest.fixture
+    def loop_runner(self, loop_policy, loop):
+        return loop_policy.create_loop_runner(loop)
+
+    def test_runs_one_callback(self, loop, loop_runner):
+        def callback():
+            loop_runner.stop_loop()
+
+        cb_mock = Mock(wraps=callback)
+
+        loop.call_soon(cb_mock)
+
+        with pytest.raises(LoopStopped):
+            loop_runner.run_loop()
+
+        assert cb_mock.mock_calls == [call()]
+
+    def test_runs_callbacks_after_stop_callback(self, loop, loop_runner):
+        def callback1():
+            loop_runner.stop_loop()
+            loop.call_soon(cb2_mock)
+
+        cb1_mock = Mock(wraps=callback1)
+        cb2_mock = Mock()
+
+        loop.call_soon(cb1_mock)
+
+        with pytest.raises(LoopStopped):
+            loop_runner.run_loop()
+
+        assert cb1_mock.mock_calls == [call()]
+        assert cb2_mock.mock_calls == [call()]
+
+    def test_runs_late_callbacks_after_stop_callback(self, loop, loop_runner):
+        def callback1():
+            loop_runner.stop_loop()
+            loop.call_later(10, cb2_mock)
+
+        cb1_mock = Mock(wraps=callback1)
+        cb2_mock = Mock()
+
+        loop.call_soon(cb1_mock)
+
+        time_before = loop.clock.now()
+        with pytest.raises(LoopStopped):
+            loop_runner.run_loop()
+
+        assert loop.clock.now() - time_before == 10
+        assert cb1_mock.mock_calls == [call()]
+        assert cb2_mock.mock_calls == [call()]
+
+
+@pytest.mark.usefixtures("loop_policy")
+class TestEntryRun:
+    def test_runs_simple_coroutine(self):
         should_be_called = Mock()
 
         async def root():
             should_be_called()
 
-        loop.run(root())
+        aio.run(root())
 
         assert should_be_called.mock_calls == [call()]
 
-    def test_returns_coroutine_result(self, loop):
+    def test_returns_coroutine_result(self):
         result = Mock(name="result")
 
         async def root():
             return result
 
-        assert loop.run(root()) == result
+        assert aio.run(root()) == result
 
-    def test_propagates_coroutine_exception(self, loop):
+    def test_propagates_coroutine_exception(self):
         async def root():
             raise Exception("Some exception")
 
         with pytest.raises(Exception, match="Some exception"):
-            loop.run(root())
+            aio.run(root())
 
-    def test_runs_multi_suspend_coroutine(self, loop, clock):
+    def test_runs_multi_suspend_coroutine(self, clock):
         should_be_called = Mock()
 
         async def root():
@@ -410,10 +468,10 @@ class TestLoopRun:
 
             should_be_called()
 
-        loop.run(root())
+        aio.run(root())
         assert should_be_called.mock_calls == [call()]
 
-    def test_changes_sigint_to_cancelled_v1(self, loop):
+    def test_changes_sigint_to_cancelled_v1(self):
         should_be_called = Mock()
         should_not_be_called = Mock()
 
@@ -427,12 +485,12 @@ class TestLoopRun:
             should_not_be_called()
 
         with pytest.raises(aio.KeyboardCancelled):
-            loop.run(root())
+            aio.run(root())
 
         assert should_be_called.mock_calls == [call()]
         assert should_not_be_called.mock_calls == []
 
-    def test_changes_sigint_to_cancelled_v2(self, loop):
+    def test_changes_sigint_to_cancelled_v2(self):
         should_be_called = Mock()
         should_not_be_called = Mock()
 
@@ -447,17 +505,12 @@ class TestLoopRun:
             should_not_be_called()
 
         with pytest.raises(aio.KeyboardCancelled):
-            loop.run(root())
+            aio.run(root())
 
         assert should_be_called.mock_calls == [call()]
         assert should_not_be_called.mock_calls == []
 
-
-class TestEntryRun:
-    def test_should_warn_if_async_gen_being_gc_while_not_finished(
-        self,
-        clock,
-    ):
+    def test_should_warn_if_async_gen_being_gc_while_not_finished(self, clock):
         should_be_called_in_root = Mock()
         should_be_called_in_gen = Mock()
         should_not_be_called_in_gen = Mock()

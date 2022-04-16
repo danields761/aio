@@ -3,17 +3,16 @@ from __future__ import annotations
 import contextvars
 import datetime
 import os
-import signal
 from functools import partial
-from typing import Any, Callable, Coroutine, Mapping, ParamSpec, TypeVar
+from typing import Any, Callable, Mapping, NoReturn, ParamSpec, TypeVar
 
-from aio.exceptions import KeyboardCancelled, SelfCancelForbidden
 from aio.interfaces import (
     Clock,
     EventLoop,
-    Future,
     Handle,
     IOSelector,
+    LoopRunner,
+    LoopStopped,
     Task,
     UnhandledExceptionHandler,
 )
@@ -21,7 +20,7 @@ from aio.loop._priv import running_loop
 from aio.loop.pure.clock import MonotonicClock
 from aio.loop.pure.scheduler import Scheduler
 from aio.types import Logger
-from aio.utils import MeasureElapsed, SignalHandlerInstaller, get_logger
+from aio.utils import MeasureElapsed, get_logger
 
 T = TypeVar("T")
 CPS = ParamSpec("CPS")
@@ -85,6 +84,7 @@ class BaseEventLoop(EventLoop):
 
         self._scheduler = scheduler or Scheduler()
         self._selector = selector
+        self._selector_in_poll = False
         self._clock = clock
         self._exception_handler = exception_handler or partial(
             _report_loop_callback_error, logger=self._logger
@@ -118,9 +118,14 @@ class BaseEventLoop(EventLoop):
             io_wait_time=(wait_events if wait_events is not None else "wake-on-io"),
         )
         with MeasureElapsed(self._clock) as measure_io_wait:
-            selector_callbacks = self._selector.select(
-                wait_events,
-            )
+            try:
+                self._selector_in_poll = True
+                selector_callbacks = self._selector.select(
+                    wait_events,
+                )
+            finally:
+                self._selector_in_poll = False
+
             self._logger.debug(
                 "IO waiting completed",
                 triggered_events=len(selector_callbacks),
@@ -223,6 +228,11 @@ class BaseEventLoop(EventLoop):
     def clock(self) -> Clock:
         return self._clock
 
+    def _wakeup_selector_if_in_poll(self) -> None:
+        if not self._selector_in_poll:
+            return
+        self._selector.wakeup_thread_safe()
+
     def call_soon(
         self,
         target: Callable[CPS, None],
@@ -238,6 +248,7 @@ class BaseEventLoop(EventLoop):
 
         handle = Handle(None, target, args, False, False, context or {})
         self._scheduler.enqueue(handle)
+        self._wakeup_selector_if_in_poll()
         return handle
 
     def call_later(
@@ -261,36 +272,27 @@ class BaseEventLoop(EventLoop):
 
         handle = Handle(call_at, target, args, False, False, context or {})
         self._scheduler.enqueue(handle)
+        self._wakeup_selector_if_in_poll()
         return handle
 
-    def run(self, coroutine: Coroutine[Future[Any], None, T]) -> T:
-        from aio.future import _create_task
 
-        def receive_result(fut: Future[T]) -> None:
-            nonlocal received_fut
-            received_fut = fut
+class BaseLoopRunner(LoopRunner[BaseEventLoop]):
+    def __init__(self, loop: BaseEventLoop) -> None:
+        self._loop = loop
+        self._run = False
 
-        def on_keyboard_interrupt(*args: object) -> None:
-            if root_task.is_finished:
-                return
+    def get_loop(self) -> BaseEventLoop:
+        return self._loop
 
-            try:
-                root_task.cancel(KeyboardCancelled())
-            except SelfCancelForbidden as exc:
-                raise KeyboardCancelled from exc
+    def run_loop(self) -> NoReturn:
+        if self._run:
+            raise RuntimeError("`run_loop` being called twice")
 
-            self._selector.wakeup_thread_safe()
+        self._run = True
+        while self._run or self._loop._scheduler.items_num():
+            self._loop.run_step()
 
-        received_fut: Future[T] | None = None
-        root_task = _create_task(coroutine, _loop=self, label="main-task")
-        root_task.add_callback(receive_result)
+        raise LoopStopped
 
-        with SignalHandlerInstaller(signal.SIGINT, on_keyboard_interrupt):
-            while received_fut is None:
-                try:
-                    self.run_step()
-                except KeyboardCancelled:
-                    raise
-
-        assert root_task.is_finished
-        return received_fut.result()
+    def stop_loop(self) -> None:
+        self._run = False

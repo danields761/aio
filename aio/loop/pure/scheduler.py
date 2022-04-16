@@ -32,7 +32,7 @@ class PriorityQueue(Generic[T, P]):
     ) -> None:
         self._priority_fn = priority_fn
         self._ids_generator = iter(itertools.count())
-        self._min_priority = deque(_min_priority)
+        self._min_priority: deque[T] = deque(_min_priority)
         self._prioritized = [self._wrap_item(item) for item in _prioritized]
         heapq.heapify(self._prioritized)
 
@@ -90,6 +90,11 @@ class Scheduler(PriorityQueue[Handle, float]):
         return [
             handle for handle in self.pop_below_priority(time_threshold) if not handle.cancelled
         ]
+
+    def items_num(self) -> int:
+        return sum(1 for handle in self._min_priority if not handle.cancelled) + sum(
+            1 for _, _, handle in self._prioritized if not handle.cancelled
+        )
 
     def next_event(self) -> float | None:
         for _, _, handle in self._prioritized:

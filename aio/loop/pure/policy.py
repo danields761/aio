@@ -3,15 +3,20 @@ from functools import partial
 from typing import Any, AsyncIterator, Callable, ContextManager, Iterator
 
 from aio.components.executor import concurrent_executor_factory
-from aio.interfaces import EventLoop, Executor, IOSelector, LoopPolicy, Networking
-from aio.loop.pure.impl import BaseEventLoop
+from aio.interfaces import Executor, IOSelector, LoopPolicy, LoopRunner, Networking
+from aio.loop.pure.impl import BaseEventLoop, BaseLoopRunner
 from aio.loop.pure.networking import create_selector_networking, create_selectors_event_selector
 from aio.types import Logger
 from aio.utils import get_logger
 
 
-class BaseLoopPolicy(LoopPolicy):
-    def __init__(self) -> None:
+class BaseLoopPolicy(LoopPolicy[BaseEventLoop]):
+    def __init__(
+        self,
+        selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
+    ) -> None:
+        self._selector_factory = selector_factory
+
         self._selector: IOSelector | None = None
         self._loop: BaseEventLoop | None = None
         self._cached_networking: Networking | None = None
@@ -23,12 +28,13 @@ class BaseLoopPolicy(LoopPolicy):
         selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
         logger: Logger | None = None,
         **loop_kwargs: Any,
-    ) -> Iterator[EventLoop]:
+    ) -> Iterator[BaseEventLoop]:
         if self._selector is not None:
             raise RuntimeError("Attempt to create event loop on same thread twice")
 
         logger = logger or get_logger()
 
+        selector_factory = selector_factory or self._selector_factory
         if not selector_factory:
             selector_factory = partial(create_selectors_event_selector, logger=logger)
 
@@ -36,6 +42,9 @@ class BaseLoopPolicy(LoopPolicy):
             self._selector = selector
             self._loop = loop = BaseEventLoop(selector, **loop_kwargs)
             yield loop
+
+    def create_loop_runner(self, loop: BaseEventLoop) -> LoopRunner[BaseEventLoop]:
+        return BaseLoopRunner(loop)
 
     @asynccontextmanager
     async def create_networking(self) -> AsyncIterator[Networking]:
