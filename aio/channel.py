@@ -1,41 +1,63 @@
 from __future__ import annotations
 
+import contextlib
 from collections import deque
-from typing import AsyncIterable, AsyncIterator, Iterable, Tuple, TypeVar
+from typing import AsyncIterable, AsyncIterator, Iterable, Protocol, Tuple, TypeVar
 
-from aio.future import Promise, _create_promise
+from aio.future import _create_promise
+from aio.interfaces import Promise
 
 T = TypeVar("T")
+T_cov = TypeVar("T_cov", covariant=True)
+T_contra = TypeVar("T_contra", contravariant=True)
 
 
-class QueueBaseError(Exception):
+class OverflowedError(Exception):
     pass
 
 
-class QueueOverflowedError(QueueBaseError):
+class EmptyError(Exception):
     pass
 
 
-class QueueEmptyError(QueueBaseError):
+class Closed(Exception):
     pass
 
 
-class QueueClosed(QueueBaseError):
-    pass
+class Left(Protocol[T_contra]):
+    def put_no_wait(self, elem: T_contra, /) -> None:
+        raise NotImplementedError
+
+    async def put(self, elem: T_contra, /) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
 
 
-class QueueAsyncIterator(AsyncIterator[T]):
-    def __init__(self, queue: Queue[T]) -> None:
+class Right(AsyncIterable[T_cov], Protocol[T_cov]):
+    def get_no_wait(self) -> T:
+        raise NotImplementedError
+
+    async def get(self) -> T:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class _QueueAsyncIterator(AsyncIterator[T]):
+    def __init__(self, queue: _Queue[T]) -> None:
         self._queue = queue
 
     async def __anext__(self) -> T:
         try:
             return await self._queue.get()
-        except QueueClosed:
+        except Closed:
             raise StopAsyncIteration
 
 
-class Queue(AsyncIterable[T]):
+class _Queue(AsyncIterable[T]):
     def __init__(self, prepopulate: Iterable[T] = (), *, max_capacity: int | None = None) -> None:
         self._container = deque(prepopulate)
         self._read_waiters_q: deque[Promise[T]] = deque()
@@ -44,14 +66,14 @@ class Queue(AsyncIterable[T]):
         self._closed = False
 
     def __aiter__(self) -> AsyncIterator[T]:
-        return QueueAsyncIterator(self)
+        return _QueueAsyncIterator(self)
 
     def get_no_wait(self) -> T:
         if self._closed and len(self._container) == 0:
-            raise QueueClosed
+            raise Closed
 
         if len(self._container) == 0:
-            raise QueueEmptyError
+            raise EmptyError
         assert len(self._read_waiters_q) == 0
 
         if len(self._write_waiters_q) > 0 and self._max_capacity is not None:
@@ -70,7 +92,7 @@ class Queue(AsyncIterable[T]):
     async def get(self) -> T:
         try:
             return self.get_no_wait()
-        except QueueEmptyError:
+        except EmptyError:
             pass
 
         waiter_promise: Promise[T] = _create_promise()
@@ -86,12 +108,12 @@ class Queue(AsyncIterable[T]):
 
     def put_no_wait(self, elem: T) -> None:
         if self._closed:
-            raise QueueClosed
+            raise Closed
 
         if self._max_capacity is not None and len(self._container) >= self._max_capacity:
             assert len(self._read_waiters_q) == 0
 
-            raise QueueOverflowedError
+            raise OverflowedError
 
         if len(self._read_waiters_q) > 0:
             assert len(self._container) == 0
@@ -106,7 +128,7 @@ class Queue(AsyncIterable[T]):
         try:
             self.put_no_wait(elem)
             return
-        except QueueOverflowedError:
+        except OverflowedError:
             pass
 
         assert self._max_capacity is not None
@@ -124,10 +146,19 @@ class Queue(AsyncIterable[T]):
                 pass
 
     def close(self) -> None:
-        if self._closed:
-            raise RuntimeError("Queue already being closed")
         self._closed = True
         for _, write_promise in self._write_waiters_q:
-            write_promise.set_exception(QueueClosed())
+            write_promise.set_exception(Closed())
         for read_promise in self._read_waiters_q:
-            read_promise.set_exception(QueueClosed())
+            read_promise.set_exception(Closed())
+
+
+@contextlib.asynccontextmanager
+async def create(
+    prepopulate: Iterable[T] = (), *, max_capacity: int | None = None
+) -> AsyncIterator[tuple[Left, Right]]:
+    queue = _Queue(prepopulate, max_capacity=max_capacity)
+    try:
+        yield (queue, queue)
+    finally:
+        queue.close()

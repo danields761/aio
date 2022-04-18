@@ -19,7 +19,7 @@ from typing import (
     TypeVar,
 )
 
-from aio import Cancelled
+from aio.exceptions import Cancelled
 from aio.types import HasFileno
 
 T = TypeVar("T")
@@ -40,14 +40,16 @@ class IOEventCallback(Protocol):
         raise NotImplementedError
 
 
-class IOSelector(abc.ABC):
-    def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int]]:
-        raise NotImplementedError
-
+class IOSelectorRegistry(abc.ABC):
     def add_watch(self, fd: int, events: int, cb: IOEventCallback) -> None:
         raise NotImplementedError
 
     def stop_watch(self, fd: int, events: int | None, cb: IOEventCallback | None) -> None:
+        raise NotImplementedError
+
+
+class IOSelector(abc.ABC):
+    def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int]]:
         raise NotImplementedError
 
     def wakeup_thread_safe(self) -> None:

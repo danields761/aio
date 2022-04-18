@@ -5,12 +5,13 @@ import selectors
 import socket
 from collections import defaultdict
 from contextlib import closing, contextmanager
-from typing import TYPE_CHECKING, Any, ContextManager, Iterator, Literal, cast
+from typing import Any, ContextManager, Iterator, Literal
 
 from aio.exceptions import SocketConfigurationError
 from aio.interfaces import (
     IOEventCallback,
     IOSelector,
+    IOSelectorRegistry,
     Networking,
     Promise,
     SocketAddress,
@@ -75,7 +76,7 @@ class _SelectorWakeupper:
                 )
 
 
-class SelectorsEventsSelector(IOSelector):
+class SelectorsEventsSelector(IOSelectorRegistry, IOSelector):
     def __init__(
         self,
         *,
@@ -172,7 +173,7 @@ class SelectorsEventsSelector(IOSelector):
 class SelectorNetworking(Networking):
     def __init__(
         self,
-        selector: IOSelector,
+        selector: IOSelectorRegistry,
         *,
         logger: Logger | None = None,
     ) -> None:
@@ -316,11 +317,11 @@ class SelectorNetworking(Networking):
 
 def create_selectors_event_selector(
     logger: Logger | None = None,
-) -> ContextManager[IOSelector]:
+) -> ContextManager[SelectorsEventsSelector]:
     return closing(SelectorsEventsSelector(logger=logger))
 
 
 def create_selector_networking(
-    selector: IOSelector, logger: Logger | None = None
+    selector: IOSelectorRegistry, logger: Logger | None = None
 ) -> ContextManager[SelectorNetworking]:
     return closing(SelectorNetworking(selector, logger=logger))

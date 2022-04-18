@@ -1,3 +1,4 @@
+from aio import channel
 from aio.exceptions import (
     Cancelled,
     CancelMultiError,
@@ -20,14 +21,15 @@ from aio.interfaces import (
     Handle,
     IOEventCallback,
     IOSelector,
+    IOSelectorRegistry,
     Networking,
     Task,
 )
 from aio.loop.entry import run
-from aio.queue import Queue
 from aio.task_group import task_group
 
 __all__ = [
+    "channel",
     "Cancelled",
     "CancelMultiError",
     "FutureError",
@@ -50,9 +52,9 @@ __all__ = [
     "Handle",
     "IOEventCallback",
     "IOSelector",
+    "IOSelectorRegistry",
     "Networking",
     "Task",
     "run",
-    "Queue",
     "task_group",
 ]

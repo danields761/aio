@@ -5,7 +5,11 @@ from typing import Any, AsyncIterator, Callable, ContextManager, Iterator
 from aio.components.executor import concurrent_executor_factory
 from aio.interfaces import Executor, IOSelector, LoopPolicy, LoopRunner, Networking
 from aio.loop.pure.impl import BaseEventLoop, BaseLoopRunner
-from aio.loop.pure.networking import create_selector_networking, create_selectors_event_selector
+from aio.loop.pure.networking import (
+    SelectorsEventsSelector,
+    create_selector_networking,
+    create_selectors_event_selector,
+)
 from aio.types import Logger
 from aio.utils import get_logger
 
@@ -17,7 +21,7 @@ class BaseLoopPolicy(LoopPolicy[BaseEventLoop]):
     ) -> None:
         self._selector_factory = selector_factory
 
-        self._selector: IOSelector | None = None
+        self._selector: SelectorsEventsSelector | None = None
         self._loop: BaseEventLoop | None = None
         self._cached_networking: Networking | None = None
         self._cached_executor: Executor | None = None
@@ -25,7 +29,7 @@ class BaseLoopPolicy(LoopPolicy[BaseEventLoop]):
     @contextmanager
     def create_loop(
         self,
-        selector_factory: Callable[[], ContextManager[IOSelector]] | None = None,
+        selector_factory: Callable[[], ContextManager[SelectorsEventsSelector]] | None = None,
         logger: Logger | None = None,
         **loop_kwargs: Any,
     ) -> Iterator[BaseEventLoop]:

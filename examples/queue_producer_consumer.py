@@ -1,7 +1,7 @@
 import aio
 
 
-async def provider(q: aio.Queue[int]) -> None:
+async def provider(q: aio.channel.Left[int]) -> None:
     for i in range(10):
         await q.put(i)
         await aio.sleep(0.1)
@@ -9,19 +9,22 @@ async def provider(q: aio.Queue[int]) -> None:
     print("provider done")
 
 
-async def consumer(q: aio.Queue[int]) -> None:
-    async for elem in q:
-        print("consumed", elem)
-    print("consumer done")
+async def consumer(q: aio.channel.Right[int]) -> None:
+    try:
+        async for elem in q:
+            print("consumed", elem)
+    finally:
+        print("consumer done")
 
 
 async def main() -> None:
-    q: aio.Queue[int] = aio.Queue(max_capacity=1)
-    async with aio.task_group() as tg:
-        tg.spawn(provider(q))
-        tg.spawn(consumer(q))
+    async with aio.channel.create(max_capacity=1) as (left, right):
+        async with aio.create_task(provider(left), label="provider"), aio.create_task(
+            consumer(right), label="consumer"
+        ):
+            pass
 
     print("main done")
 
 
-aio.run_loop(main())
+aio.run(main())

@@ -45,8 +45,7 @@ async def _stupid_execute_on_thread(
 
 
 class ConcurrentExecutor(Executor):
-    def __init__(self, selector: IOSelector, executor: _Executor) -> None:
-        self._selector = selector
+    def __init__(self, executor: _Executor) -> None:
         self._executor = executor
 
     async def execute_sync_callable(

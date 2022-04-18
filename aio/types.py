@@ -58,6 +58,9 @@ LoggerExcInfo = BaseException | bool
 
 
 class Logger(Protocol):
+    def trace(self, msg: str, exc_info: LoggerExcInfo | None = None, **params: Any) -> None:
+        raise NotImplementedError
+
     def debug(self, msg: str, exc_info: LoggerExcInfo | None = None, **params: Any) -> None:
         raise NotImplementedError
 

@@ -5,8 +5,7 @@ import aio
 
 async def client(host: str, port: int) -> None:
     try:
-        loop = await aio.get_loop()
-        async with loop.create_networking() as networking:
+        async with aio.loop.networking() as networking:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setblocking(False)
                 while True:
@@ -19,11 +18,19 @@ async def client(host: str, port: int) -> None:
                         await aio.sleep(1)
 
                 while True:
-                    data = await networking.sock_read(s, 1024)
-                    print("Received", data)
-                    await networking.sock_write(s, b"Echoed back: " + data + b"\n")
+                    try:
+                        data = await networking.sock_read(s, 1024)
+                        if data == b"":
+                            print("EOF received")
+                            break
+                        else:
+                            print("Received", data)
+                            await networking.sock_write(s, b"Echoed back: " + data + b"\n")
+                    except OSError as exc:
+                        print("Exception while IO on socket", exc)
+                        raise
     finally:
         print("Client has stopped")
 
 
-aio.run_loop(client("127.0.0.1", 5000))
+aio.run(client("127.0.0.1", 5000))

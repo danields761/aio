@@ -93,7 +93,7 @@ class BaseEventLoop(EventLoop):
         self._debug = debug
 
     def run_step(self) -> None:
-        self._logger.debug("Running loop step...")
+        self._logger.trace("Running loop step...")
 
         at_start = self._clock.now()
         clock_resolution = self._clock.resolution()
@@ -113,7 +113,7 @@ class BaseEventLoop(EventLoop):
                 wait_events = 0
 
         #
-        self._logger.debug(
+        self._logger.trace(
             "Wait for IO",
             io_wait_time=(wait_events if wait_events is not None else "wake-on-io"),
         )
@@ -126,7 +126,7 @@ class BaseEventLoop(EventLoop):
             finally:
                 self._selector_in_poll = False
 
-            self._logger.debug(
+            self._logger.trace(
                 "IO waiting completed",
                 triggered_events=len(selector_callbacks),
                 select_poll_elapsed=measure_io_wait.get_elapsed(),
@@ -143,16 +143,16 @@ class BaseEventLoop(EventLoop):
 
         # Invoke early callbacks
         if early_callbacks:
-            self._logger.debug("Invoking early callbacks", callbacks_num=len(early_callbacks))
+            self._logger.trace("Invoking early callbacks", callbacks_num=len(early_callbacks))
             with measure_callbacks:
                 for handle in early_callbacks:
                     self._invoke_handle(cv_context, handle)
-                self._logger.debug(
+                self._logger.trace(
                     "Early callbacks invoked", elapsed=measure_callbacks.get_elapsed()
                 )
 
         # Invoke IO callbacks
-        self._logger.debug("Invoking IO callbacks", callbacks_num=len(selector_callbacks))
+        self._logger.trace("Invoking IO callbacks", callbacks_num=len(selector_callbacks))
         with measure_callbacks:
             for callback, fd, events in selector_callbacks:
                 self._invoke_callback(
@@ -164,23 +164,23 @@ class BaseEventLoop(EventLoop):
                     fd=fd,
                     events=events,
                 )
-            self._logger.debug("IO callbacks invoked", elapsed=measure_callbacks.get_elapsed())
+            self._logger.trace("IO callbacks invoked", elapsed=measure_callbacks.get_elapsed())
 
         # Pop late-callbacks and invoke them
         late_callbacks = self._scheduler.pop_pending(end_at)
-        self._logger.debug(
+        self._logger.trace(
             "Invoking late callbacks",
             callbacks_num=len(early_callbacks),
         )
         with measure_callbacks:
             for handle in late_callbacks:
                 self._invoke_handle(cv_context, handle)
-            self._logger.debug(
+            self._logger.trace(
                 "Late callbacks invoked",
                 elapsed=measure_callbacks.get_elapsed(),
             )
 
-        self._logger.debug(
+        self._logger.trace(
             "Loop step done", total_elapsed=datetime.timedelta(seconds=self._clock.now() - at_start)
         )
 
@@ -217,7 +217,7 @@ class BaseEventLoop(EventLoop):
 
     def _invoke_handle(self, cv_context: contextvars.Context, handle: Handle) -> None:
         if handle.cancelled:
-            self._logger.debug("Skipping cancelled handle", handle=handle)
+            self._logger.trace("Skipping cancelled handle", handle=handle)
             return
 
         self._invoke_callback(cv_context, handle.callback, *handle.args)
@@ -240,7 +240,7 @@ class BaseEventLoop(EventLoop):
         context: Mapping[str, Any] | None = None,
     ) -> Handle:
         if self._debug:
-            self._logger.debug(
+            self._logger.trace(
                 "Enqueuing callback for next cycle",
                 callback=target,
                 callback_args=args,
@@ -263,7 +263,7 @@ class BaseEventLoop(EventLoop):
 
         call_at = self._clock.now() + timeout
         if self._debug:
-            self._logger.debug(
+            self._logger.trace(
                 "Enqueuing callback at",
                 callback=target,
                 callback_args=args,
