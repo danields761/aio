@@ -15,7 +15,7 @@ def run(
     coroutine: Coroutine[Future[Any], None, T],
     **loop_kwargs: Any,
 ) -> T:
-    from aio.future import _create_task
+    from aio.future.factories import _create_task
 
     policy = get_loop_policy()
     with policy.create_loop(**loop_kwargs) as loop:

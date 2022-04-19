@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import contextvars
 import inspect
 import sys
@@ -8,31 +7,13 @@ import traceback
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import (
-    Any,
-    AsyncContextManager,
-    AsyncIterator,
-    Coroutine,
-    Generator,
-    Generic,
-    Literal,
-    Mapping,
-    TypeVar,
-)
+from typing import Any, Coroutine, Generator, Generic, Literal, Mapping, TypeVar
 
-from aio.exceptions import (
-    Cancelled,
-    CancelledByChild,
-    CancelledByParent,
-    FutureFinishedError,
-    FutureNotReady,
-    SelfCancelForbidden,
-)
+from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady, SelfCancelForbidden
+from aio.future._priv import current_task_cv
 from aio.interfaces import EventLoop, Future, FutureResultCallback, Handle, Promise, Task
 from aio.loop._priv import get_running_loop
 from aio.utils import is_coro_running
-
-T = TypeVar("T")
 
 
 def _coerce_cancel_arg(exc: str | Cancelled | None) -> Cancelled:
@@ -47,6 +28,9 @@ def _coerce_cancel_arg(exc: str | Cancelled | None) -> Cancelled:
 
 class _Sentry(Enum):
     NOT_SET = "not-set"
+
+
+T = TypeVar("T")
 
 
 class _FuturePromise(Promise[T]):
@@ -263,9 +247,6 @@ class _Future(Future[T], Generic[T]):
             )
 
 
-_current_task: contextvars.ContextVar[Task[Any]] = contextvars.ContextVar("current-task")
-
-
 @dataclass(frozen=True, kw_only=True)
 class _BaseTaskState(_PendingState[T], Generic[T]):
     expect_coro_state: str
@@ -430,7 +411,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
         if inner_cancel:
             assert self._state.waiting_on.is_finished
 
-        reset_token = _current_task.set(self)
+        reset_token = current_task_cv.set(self)
         try:
             if not inner_cancel:
                 maybe_feature = self._state.coroutine.send(None)
@@ -443,20 +424,10 @@ class _Task(_Future[T], Task[T], Generic[T]):
                 raise RuntimeError("All `aio` coroutines must yield and `Feature` instance")
             return maybe_feature
         finally:
-            _current_task.reset(reset_token)
+            current_task_cv.reset(reset_token)
 
     def __repr__(self) -> str:
         return f"<Task label={self._label} state={self.state!r} >"
-
-
-async def get_current_task() -> Task[Any]:
-    try:
-        return _current_task.get()
-    except LookupError:
-        raise RuntimeError(
-            "Current task isn't accessible from current coroutine, "
-            "probably it being run on non-`aio` event loop instance"
-        )
 
 
 def _create_promise(
@@ -479,55 +450,3 @@ def _create_task(
     task = _Task(coro, _loop, label=label)
     task._schedule_first_step()
     return task
-
-
-@contextlib.asynccontextmanager
-async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
-    promise = _create_promise(label)
-    try:
-        yield promise
-    finally:
-        if not promise.future.is_finished:
-            promise.cancel()
-
-
-def create_task(
-    coro: Coroutine[Future[Any], None, T], label: str | None = None
-) -> AsyncContextManager[Task[T]]:
-    task = _create_task(coro, label)
-    return _guard_task(task)
-
-
-@contextlib.asynccontextmanager
-async def _guard_task(task: _Task[T]) -> AsyncIterator[Task[T]]:
-    from aio.funcs import shield
-
-    current_task = _current_task.get()
-    assert isinstance(current_task, _Task), "Could control only pure task implementation"
-
-    def on_task_done(fut: Future[T]) -> None:
-        if not fut.exception():
-            return
-
-        assert isinstance(current_task, _Task)  # mypy
-        current_task._cancel(exc=CancelledByChild("Child task finished with an exception"))
-
-    task.add_callback(on_task_done)
-    try:
-        yield task
-    except (Exception, Cancelled):
-        task.remove_callback(on_task_done)
-        if not task.is_finished:
-            new_exc = CancelledByParent("Parent task being aborted with an exception")
-            task._cancel(exc=new_exc)
-        raise
-    finally:
-        task.remove_callback(on_task_done)
-        _, parent_exc, _ = sys.exc_info()
-        try:
-            await shield(task)
-        except CancelledByParent:
-            pass
-        except (Exception, Cancelled) as child_exc:
-            if isinstance(parent_exc, CancelledByChild):
-                raise child_exc

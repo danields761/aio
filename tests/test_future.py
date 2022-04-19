@@ -10,7 +10,8 @@ import aio
 import aio.future
 import aio.interfaces
 from aio.exceptions import CancelledByChild, CancelledByParent, SelfCancelForbidden
-from aio.future import _create_promise, _create_task, _guard_task, _Task
+from aio.future.factories import _guard_task
+from aio.future.pure import _create_promise, _create_task, _Task
 from aio.loop._priv import running_loop
 
 

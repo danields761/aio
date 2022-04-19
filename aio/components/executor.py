@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError
-from aio.future import _create_promise
+from aio.future import create_promise
 from aio.interfaces import Executor, IOSelector, Promise
 from aio.loop import get_running
 
@@ -28,8 +28,6 @@ async def _stupid_execute_on_thread(
 ) -> None:
     loop = await get_running()
 
-    waiter: Promise[None] = _create_promise("thread-waiter")
-
     def thread_fn() -> None:
         try:
             fn(*args, **kwargs)
@@ -40,7 +38,9 @@ async def _stupid_execute_on_thread(
 
     thread = threading.Thread(target=thread_fn, name=name)
     thread.start()
-    await waiter.future
+
+    async with create_promise("thread-waiter") as waiter:
+        await waiter.future
     return
 
 
@@ -53,7 +53,6 @@ class ConcurrentExecutor(Executor):
     ) -> T:
         loop = await get_running()
         cfuture = self._executor.submit(fn, args)
-        waiter: Promise[T] = _create_promise(label="executor-waiter")
 
         def on_result_from_executor(_: _Future[T]) -> None:
             assert cfuture.done()
@@ -71,13 +70,13 @@ class ConcurrentExecutor(Executor):
                     cfuture.result,
                 )
 
-        cfuture.add_done_callback(on_result_from_executor)
-
-        try:
-            return await waiter.future
-        except Cancelled:
-            self._executor.submit(cfuture.cancel)
-            raise
+        async with create_promise(label="executor-waiter") as waiter:
+            cfuture.add_done_callback(on_result_from_executor)
+            try:
+                return await waiter.future
+            except Cancelled:
+                self._executor.submit(cfuture.cancel)
+                raise
 
 
 async def _close_std_executor(executor: _Executor) -> None:
@@ -91,10 +90,10 @@ async def _close_std_executor(executor: _Executor) -> None:
 
 @asynccontextmanager
 async def concurrent_executor_factory(
-    selector: IOSelector, override_executor: _Executor | None = None
+    override_executor: _Executor | None = None,
 ) -> AsyncIterator[Executor]:
     std_executor = override_executor or ThreadPoolExecutor(thread_name_prefix="loop-executor")
-    executor = ConcurrentExecutor(selector, std_executor)
+    executor = ConcurrentExecutor(std_executor)
     try:
         yield executor
     finally:

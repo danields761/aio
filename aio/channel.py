@@ -4,7 +4,7 @@ import contextlib
 from collections import deque
 from typing import AsyncIterable, AsyncIterator, Iterable, Protocol, Tuple, TypeVar
 
-from aio.future import _create_promise
+from aio.future import create_promise
 from aio.interfaces import Promise
 
 T = TypeVar("T")
@@ -95,16 +95,16 @@ class _Queue(AsyncIterable[T]):
         except EmptyError:
             pass
 
-        waiter_promise: Promise[T] = _create_promise()
-        self._read_waiters_q.append(waiter_promise)
+        async with create_promise("get-waiter") as waiter_promise:
+            self._read_waiters_q.append(waiter_promise)
 
-        try:
-            return await waiter_promise.future
-        finally:
             try:
-                self._read_waiters_q.remove(waiter_promise)
-            except ValueError:
-                pass
+                return await waiter_promise.future
+            finally:
+                try:
+                    self._read_waiters_q.remove(waiter_promise)
+                except ValueError:
+                    pass
 
     def put_no_wait(self, elem: T) -> None:
         if self._closed:
@@ -132,24 +132,27 @@ class _Queue(AsyncIterable[T]):
             pass
 
         assert self._max_capacity is not None
+        async with create_promise("put-waiter") as waiter_promise:
+            waiters_q_elem = (elem, waiter_promise)
+            self._write_waiters_q.append(waiters_q_elem)
 
-        waiter_promise: Promise[None] = _create_promise()
-        waiters_q_elem = (elem, waiter_promise)
-        self._write_waiters_q.append(waiters_q_elem)
-
-        try:
-            await waiter_promise.future
-        finally:
             try:
-                self._write_waiters_q.remove(waiters_q_elem)
-            except ValueError:
-                pass
+                await waiter_promise.future
+            finally:
+                try:
+                    self._write_waiters_q.remove(waiters_q_elem)
+                except ValueError:
+                    pass
 
     def close(self) -> None:
         self._closed = True
         for _, write_promise in self._write_waiters_q:
+            if write_promise.future.is_finished:
+                continue
             write_promise.set_exception(Closed())
         for read_promise in self._read_waiters_q:
+            if read_promise.future.is_finished:
+                continue
             read_promise.set_exception(Closed())
 
 
