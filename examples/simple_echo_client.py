@@ -1,6 +1,10 @@
 import socket
 
 import aio
+import aio.loop.uv.policy
+
+
+aio.loop.set_loop_policy(aio.loop.uv.policy.UVPolicy())
 
 
 async def client(host: str, port: int) -> None:
@@ -9,6 +13,7 @@ async def client(host: str, port: int) -> None:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setblocking(False)
                 while True:
+                    print(f"Starting connection to {host}:{port}...")
                     try:
                         await networking.sock_connect(s, (host, port))
                         print(f"Connection to {host}:{port} established")

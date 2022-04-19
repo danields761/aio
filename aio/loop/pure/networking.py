@@ -95,15 +95,26 @@ class SelectorsEventsSelector(IOSelectorRegistry, IOSelector):
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
         self._is_finalized = False
 
-    def select(self, timeout: float | None) -> list[tuple[IOEventCallback, int, int]]:
+    def select(
+        self, timeout: float | None
+    ) -> list[tuple[IOEventCallback, int, int, OSError | None]]:
         self._check_not_finalized()
 
-        ready = self._selector.select(timeout)
+        try:
+            ready = self._selector.select(timeout)
+        except OSError as exc:
+            self._logger.warning("Exception while poll")
+            return [
+                (callback, key.fd, 0, exc)
+                for key in self._selector.get_map().values()
+                for _, callback in key.data
+            ]
+
         return [
-            (callback, key.fd, events)
+            (callback, key.fd, events, None)
             for key, events in ready
             for need_events, callback in key.data
-            if events & need_events == need_events
+            if events & need_events != 0
         ]
 
     def add_watch(self, fd: int, events: int, cb: IOEventCallback) -> None:
@@ -203,9 +214,14 @@ class SelectorNetworking(Networking):
 
         waiter: Promise[Any] = _create_promise(f"socket-{event_name}-waiter", sock=sock)
 
-        def done_cb(_: int, __: int) -> None:
-            if not waiter.future.is_finished:
+        def done_cb(_: int, __: int, exc: BaseException | None) -> None:
+            if waiter.future.is_finished:
+                return
+
+            if not exc:
                 waiter.set_result(None)
+            else:
+                waiter.set_exception(exc)
 
         self._selector.add_watch(sock, events, done_cb)
 
@@ -225,7 +241,9 @@ class SelectorNetworking(Networking):
                 except BlockingIOError:
                     pass
 
-                await self._wait_sock_events(fd, selectors.EVENT_WRITE, "connect")
+                await self._wait_sock_events(
+                    fd, selectors.EVENT_WRITE | selectors.EVENT_READ, "connect"
+                )
 
     async def sock_accept(self, sock: socket.socket) -> tuple[socket.socket, SocketAddress]:
         with self._manage_sock(sock) as fd:

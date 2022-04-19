@@ -36,7 +36,7 @@ class Clock(abc.ABC):
 
 
 class IOEventCallback(Protocol):
-    def __call__(self, fd: int, events: int, /) -> None:
+    def __call__(self, fd: int, events: int, exc: OSError | None, /) -> None:
         raise NotImplementedError
 
 

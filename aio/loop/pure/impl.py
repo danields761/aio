@@ -39,12 +39,6 @@ def _report_loop_callback_error(
     if cb:
         logger = logger.bind(callback=cb)
 
-    if not isinstance(exc, Exception):
-        logger.warning(
-            "Callback raises non `Exception` derivative, which is forbidden",
-            exc_info=exc,
-        )
-
     if not task and not future:
         logger.error(f"Callback {cb} raised an unhandled exception", exc_info=exc)
         return
@@ -58,7 +52,7 @@ def _report_loop_callback_error(
         return
     elif future:
         logger.error(
-            (f"Unhandled error occurs while " f"processing callback for future {future!r}"),
+            f"Unhandled error occurs while processing callback for future {future!r}",
             callback=cb,
             future=future,
             exc_info=exc,
@@ -154,12 +148,13 @@ class BaseEventLoop(EventLoop):
         # Invoke IO callbacks
         self._logger.trace("Invoking IO callbacks", callbacks_num=len(selector_callbacks))
         with measure_callbacks:
-            for callback, fd, events in selector_callbacks:
+            for callback, fd, events, exc in selector_callbacks:
                 self._invoke_callback(
                     cv_context,
                     callback,
                     fd,
                     events,
+                    exc,
                     place="IO-callback",
                     fd=fd,
                     events=events,

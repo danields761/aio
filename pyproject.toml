@@ -5,8 +5,8 @@ description = "Education purpose async event loop implementation"
 authors = [
     {name = "Daniel Daniels", email = "danields761@gmail.com"}
 ]
-license-expression = "MIT"
-requires-python = ">=3.8,<4.0"
+license = { text = "MIT" }
+requires-python = ">=3.10,<4.0"
 dependencies = [
     "more-itertools<9.0.0,>=8.3.0",
     "loguru",

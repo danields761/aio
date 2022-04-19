@@ -26,7 +26,6 @@ from aio.interfaces import (
     Task,
 )
 from aio.loop.entry import run
-from aio.task_group import task_group
 
 __all__ = [
     "channel",
@@ -56,5 +55,4 @@ __all__ = [
     "Networking",
     "Task",
     "run",
-    "task_group",
 ]

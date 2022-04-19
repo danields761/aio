@@ -356,16 +356,18 @@ class TestLoopStepping:
         with pytest.raises(LookupError):
             aio.loop._priv.running_loop.get()
 
+        test_exc = OSError("Test OS error")
+
         @mock_wraps
         def io_callback(*_):
             assert aio.loop._priv.running_loop.get() is loop
 
-        selector.select = lambda *_: [(io_callback, 0, 0)]
+        selector.select = lambda *_: [(io_callback, 0, 0, test_exc)]
 
         loop = make_loop(Scheduler())
         loop.run_step()
 
-        assert io_callback.mock_calls == [call(0, 0)]
+        assert io_callback.mock_calls == [call(0, 0, test_exc)]
 
         with pytest.raises(LookupError):
             aio.loop._priv.running_loop.get()
