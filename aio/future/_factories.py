@@ -5,16 +5,32 @@ import sys
 from typing import Any, AsyncContextManager, AsyncIterator, Coroutine, TypeVar
 
 from aio.exceptions import Cancelled, CancelledByChild, CancelledByParent
+from aio.future import cfuture, pure
 from aio.future._priv import current_task_cv
-from aio.future.pure import _create_promise, _create_task
 from aio.interfaces import Future, Promise, Task
+from aio.loop._priv import get_running_loop
 
 T = TypeVar("T")
+
+_create_promise = pure.create_promise
+_create_task = pure.create_task
+
+
+def cancel_future(future: Future[object], msg: str | Cancelled | None = None) -> None:
+    if isinstance(future, cfuture.Future):
+        return cfuture.cancel_future(future, msg)
+    elif isinstance(future, pure.Future):
+        return pure.cancel_future(future, msg)
+
+    type_ = type(future)
+    raise TypeError(
+        f"Unexpected future implementation of {type_.__module__}.{type.__qualname__}: {future!r}"
+    )
 
 
 @contextlib.asynccontextmanager
 async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
-    promise = _create_promise(label)
+    promise = _create_promise(get_running_loop(), label)
     try:
         yield promise
     finally:
@@ -25,7 +41,7 @@ async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
 def create_task(
     coro: Coroutine[Future[Any], None, T], label: str | None = None
 ) -> AsyncContextManager[Task[T]]:
-    task = _create_task(coro, label)
+    task = _create_task(coro, get_running_loop(), label)
     return _guard_task(task)
 
 
@@ -40,7 +56,7 @@ async def _guard_task(task: Task[T]) -> AsyncIterator[Task[T]]:
             return
 
         assert isinstance(current_task, Task)  # mypy
-        current_task.cancel(exc=CancelledByChild("Child task finished with an exception"))
+        current_task.cancel(CancelledByChild("Child task finished with an exception"))
 
     task.add_callback(on_task_done)
     try:
@@ -49,7 +65,7 @@ async def _guard_task(task: Task[T]) -> AsyncIterator[Task[T]]:
         task.remove_callback(on_task_done)
         if not task.is_finished:
             new_exc = CancelledByParent("Parent task being aborted with an exception")
-            task.cancel(exc=new_exc)
+            task.cancel(new_exc)
         raise
     finally:
         task.remove_callback(on_task_done)

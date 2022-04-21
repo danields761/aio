@@ -117,6 +117,7 @@ class EventLoop(abc.ABC):
     def call_soon(
         self,
         target: Callable[CPS, None],
+        /,
         *args: CPS.args,
         context: Mapping[str, Any] | None = None,
     ) -> Handle:
@@ -126,6 +127,7 @@ class EventLoop(abc.ABC):
         self,
         timeout: float,
         target: Callable[CPS, None],
+        /,
         *args: CPS.args,
         context: Mapping[str, Any] | None = None,
     ) -> Handle:
@@ -134,6 +136,7 @@ class EventLoop(abc.ABC):
     def call_soon_thread_safe(
         self,
         target: Callable[CPS, None],
+        /,
         *args: CPS.args,
         context: Mapping[str, Any] | None = None,
     ) -> Handle:
@@ -143,6 +146,7 @@ class EventLoop(abc.ABC):
         self,
         timeout: float,
         target: Callable[CPS, None],
+        /,
         *args: CPS.args,
         context: Mapping[str, Any] | None = None,
     ) -> Handle:
@@ -160,7 +164,7 @@ class FutureResultCallback(Protocol[T]):
 
 class Promise(abc.ABC, Generic[T]):
     @abc.abstractmethod
-    def set_result(self, val: T) -> None:
+    def set_result(self, val: T, /) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -186,6 +190,11 @@ class Future(abc.ABC, Generic[T]):
 
     @property
     @abc.abstractmethod
+    def label(self) -> str | None:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
     def state(self) -> Future.State:
         raise NotImplementedError
 
@@ -203,11 +212,11 @@ class Future(abc.ABC, Generic[T]):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def add_callback(self, cb: FutureResultCallback[T]) -> None:
+    def add_callback(self, cb: FutureResultCallback[T], /) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def remove_callback(self, cb: FutureResultCallback[T]) -> None:
+    def remove_callback(self, cb: FutureResultCallback[T], /) -> None:
         raise NotImplementedError
 
     @property
@@ -227,7 +236,7 @@ class Future(abc.ABC, Generic[T]):
 
 class Task(Future[T], abc.ABC, Generic[T]):
     @abc.abstractmethod
-    def cancel(self, exc: str | Cancelled | None = None) -> None:
+    def cancel(self, exc: str | Cancelled | None = None, /) -> None:
         raise NotImplementedError
 
 

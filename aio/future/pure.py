@@ -11,19 +11,13 @@ from typing import Any, Coroutine, Generator, Generic, Literal, Mapping, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady, SelfCancelForbidden
 from aio.future._priv import current_task_cv
-from aio.interfaces import EventLoop, Future, FutureResultCallback, Handle, Promise, Task
-from aio.loop._priv import get_running_loop
+from aio.future.utils import coerce_cancel_arg
+from aio.interfaces import EventLoop
+from aio.interfaces import Future as ABCFuture
+from aio.interfaces import FutureResultCallback, Handle
+from aio.interfaces import Promise as ABCPromise
+from aio.interfaces import Task as ABCTask
 from aio.utils import is_coro_running
-
-
-def _coerce_cancel_arg(exc: str | Cancelled | None) -> Cancelled:
-    match exc:
-        case str():
-            return Cancelled(exc)
-        case None:
-            return Cancelled()
-        case _:
-            return exc
 
 
 class _Sentry(Enum):
@@ -33,9 +27,9 @@ class _Sentry(Enum):
 T = TypeVar("T")
 
 
-class _FuturePromise(Promise[T]):
-    def __init__(self, future: _Future[T]) -> None:
-        if isinstance(future, _Task):
+class FuturePromise(ABCPromise[T]):
+    def __init__(self, future: Future[T]) -> None:
+        if isinstance(future, Task):
             raise TypeError("Promise could not control task instance")
         self._fut = future
 
@@ -56,7 +50,7 @@ class _FuturePromise(Promise[T]):
         self._fut._cancel(exc)
 
     @property
-    def future(self) -> Future[T]:
+    def future(self) -> ABCFuture[T]:
         return self._fut
 
     def __repr__(self) -> str:
@@ -81,7 +75,7 @@ class _FailedState:
     scheduled_cbs: dict[int, Handle]
 
 
-class _Future(Future[T], Generic[T]):
+class Future(ABCFuture[T], Generic[T]):
     def __init__(self, loop: EventLoop, label: str | None = None, **context: Any) -> None:
         self._state: _PendingState[T] | _SuccessState[T] | _FailedState = _PendingState(
             result_callbacks={}
@@ -97,12 +91,16 @@ class _Future(Future[T], Generic[T]):
         self._loop = loop
 
     @property
-    def state(self) -> Future.State:
+    def label(self) -> str | None:
+        return self._label
+
+    @property
+    def state(self) -> ABCFuture.State:
         match self._state:
             case _PendingState():
-                return Future.State.running
+                return ABCFuture.State.running
             case _SuccessState() | _FailedState():
-                return Future.State.finished
+                return ABCFuture.State.finished
             case _:
                 assert False
 
@@ -203,9 +201,9 @@ class _Future(Future[T], Generic[T]):
             assert False
 
     def _cancel(self, exc: str | Cancelled | None = None) -> None:
-        self._set_result(exc=_coerce_cancel_arg(exc))
+        self._set_result(exc=coerce_cancel_arg(exc))
 
-    def __await__(self) -> Generator[Future[Any], None, T]:
+    def __await__(self) -> Generator[ABCFuture[Any], None, T]:
         if isinstance(self._state, _PendingState):
             yield self
 
@@ -215,8 +213,8 @@ class _Future(Future[T], Generic[T]):
         return self.result()
 
     def __repr__(self) -> str:
-        label = self._label if self._label else ""
-        return f"<Future label={label} state={self.state.name} at {hex(id(self))}>"
+        label = self._label or "UNNAMED"
+        return f"<Future label={label!r} state={self.state.name} at {hex(id(self))}>"
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, type(self)):
@@ -250,7 +248,7 @@ class _Future(Future[T], Generic[T]):
 @dataclass(frozen=True, kw_only=True)
 class _BaseTaskState(_PendingState[T], Generic[T]):
     expect_coro_state: str
-    coroutine: Coroutine[Future[Any], None, T]
+    coroutine: Coroutine[ABCFuture[Any], None, T]
 
     def __post_init__(self) -> None:
         coro_state = inspect.getcoroutinestate(self.coroutine)
@@ -275,7 +273,7 @@ class _ScheduledState(_BaseTaskState[T], Generic[T]):
 
 @dataclass(frozen=True, kw_only=True)
 class _RunningState(_BaseTaskState[T], Generic[T]):
-    waiting_on: _Future[Any]
+    waiting_on: Future[Any]
     expect_coro_state: Literal["CORO_SUSPENDED"] = "CORO_SUSPENDED"
 
 
@@ -284,22 +282,29 @@ _TaskState = (
 )
 
 
-class _Task(_Future[T], Task[T], Generic[T]):
+class _TaskInnerError(Exception):
+    pass
+
+
+class Task(Future[T], ABCTask[T], Generic[T]):
     def __init__(
-        self, coroutine: Coroutine[Future[Any], None, T], loop: EventLoop, label: str | None = None
+        self,
+        coroutine: Coroutine[ABCFuture[Any], None, T],
+        loop: EventLoop,
+        label: str | None = None,
     ) -> None:
         super().__init__(loop, label, task=self, future=None)
         self._state: _TaskState = _CreatedState(result_callbacks={}, coroutine=coroutine)
 
     @property
-    def state(self) -> Future.State:
+    def state(self) -> ABCFuture.State:
         match self._state:
             case _CreatedState():
-                return Future.State.created
+                return ABCFuture.State.created
             case _ScheduledState():
-                return Future.State.scheduled
+                return ABCFuture.State.scheduled
             case _RunningState():
-                return Future.State.running
+                return ABCFuture.State.running
             case _:
                 return super().state
 
@@ -326,6 +331,8 @@ class _Task(_Future[T], Task[T], Generic[T]):
         super()._set_result(val, exc)
 
     def _cancel(self, exc: str | Cancelled | None = None) -> None:
+        from aio.future._factories import cancel_future
+
         if not isinstance(self._state, _PendingState):
             raise FutureFinishedError
 
@@ -337,14 +344,14 @@ class _Task(_Future[T], Task[T], Generic[T]):
                 super()._cancel(exc)
             case _RunningState(waiting_on=waiting_on) if not waiting_on.is_finished:
                 # Recursively cancel all inner tasks
-                waiting_on._cancel(exc)
+                cancel_future(waiting_on, exc)
             case _RunningState(waiting_on=waiting_on):
                 # In case, if awaited future already finished, we can't cancel it, so there
                 #  is workaround called "inner cancel", e.g. cancellation, which emitted right in
                 #  coroutine via `Coroutine.throw` method, opposite to standard approach, when
                 #  futures cancelled recursively, and then they propagate cancellation back
                 waiting_on.remove_callback(self._execute_coroutine_step)
-                self.loop.call_soon(self._execute_coroutine_step, None, _coerce_cancel_arg(exc))
+                self.loop.call_soon(self._execute_coroutine_step, None, coerce_cancel_arg(exc))
             case _CreatedState() | _:
                 super()._cancel(exc)
 
@@ -359,7 +366,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
         )
 
     def _execute_coroutine_step(
-        self, _: Future[Any] | None = None, inner_cancel: Cancelled | None = None
+        self, _: ABCFuture[Any] | None = None, inner_cancel: Cancelled | None = None
     ) -> None:
         if not isinstance(self._state, _ScheduledState | _RunningState):
             raise RuntimeError("Trying to resume finished task")
@@ -373,6 +380,8 @@ class _Task(_Future[T], Task[T], Generic[T]):
         try:
             try:
                 future = cv_context.run(self._send_to_coroutine_within_new_context, inner_cancel)
+            except _TaskInnerError:
+                raise
             except StopIteration as exc:
                 val: T = exc.value
                 self._set_result(val=val)
@@ -406,7 +415,7 @@ class _Task(_Future[T], Task[T], Generic[T]):
 
     def _send_to_coroutine_within_new_context(
         self, inner_cancel: Cancelled | None = None
-    ) -> _Future[Any]:
+    ) -> Future[Any]:
         assert isinstance(self._state, _ScheduledState | _RunningState)
         if inner_cancel:
             assert self._state.waiting_on.is_finished
@@ -420,33 +429,32 @@ class _Task(_Future[T], Task[T], Generic[T]):
                     type(inner_cancel), inner_cancel, inner_cancel.__traceback__
                 )
 
-            if not isinstance(maybe_feature, _Future):
-                raise RuntimeError("All `aio` coroutines must yield and `Feature` instance")
+            if not isinstance(maybe_feature, ABCFuture):
+                raise _TaskInnerError("All `aio` coroutines must yield and `Feature` instance")
             return maybe_feature
         finally:
             current_task_cv.reset(reset_token)
 
     def __repr__(self) -> str:
-        return f"<Task label={self._label} state={self.state!r} >"
+        return f"<Task label={self._label!r} state={self.state.name} >"
 
 
-def _create_promise(
-    label: str | None = None, *, _loop: EventLoop | None = None, **context: Any
-) -> _FuturePromise[T]:
-    if _loop is None:
-        _loop = get_running_loop()
-    future: _Future[T] = _Future(_loop, label=label, **context)
-    return _FuturePromise(future)
+def create_promise(loop: EventLoop, label: str | None = None, **context: Any) -> FuturePromise[T]:
+    future: Future[T] = Future(loop, label=label, **context)
+    return FuturePromise(future)
 
 
-def _create_task(
-    coro: Coroutine[Future[Any], None, T],
+def create_task(
+    coroutine: Coroutine[ABCFuture[Any], None, T],
+    loop: EventLoop,
     label: str | None = None,
-    *,
-    _loop: EventLoop | None = None,
-) -> _Task[T]:
-    if _loop is None:
-        _loop = get_running_loop()
-    task = _Task(coro, _loop, label=label)
+) -> ABCTask[T]:
+    task = Task(coroutine, loop, label)
     task._schedule_first_step()
     return task
+
+
+def cancel_future(future: ABCFuture[object], msg: str | Cancelled | None = None) -> None:
+    if not isinstance(future, Future):
+        raise TypeError(f"Pure `{cancel_future.__name__}` can only cancel pure futures")
+    future._cancel(msg)

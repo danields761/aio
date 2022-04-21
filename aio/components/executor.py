@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Callable, ParamSpec, TypeVar
 
 from aio.exceptions import Cancelled, FutureFinishedError
 from aio.future import create_promise
-from aio.interfaces import Executor, IOSelector, Promise
+from aio.interfaces import Executor
 from aio.loop import get_running
 
 T = TypeVar("T")
