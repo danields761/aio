@@ -1,7 +1,7 @@
 from typing import Generic, TypeVar
 
 from aio.exceptions import Cancelled
-from aio.future._cfuture import Future
+from aio.future._cimpl import Future
 from aio.future.utils import coerce_cancel_arg
 from aio.interfaces import EventLoop
 from aio.interfaces import Future as ABCFuture

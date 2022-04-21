@@ -1,5 +1,5 @@
 #include <Python.h>
-#include "cfuturemodule.h"
+#include "cimpl.h"
 #include "structmember.h"
 
 
@@ -27,7 +27,7 @@ PyTypeObject* get_loop_cls() {
     PyObject* module = PyImport_ImportModule("aio.interfaces");
     if (module == NULL)
         return NULL;
-    
+
     PyObject* cls = PyObject_GetAttrString(module, "EventLoop");
     Py_DECREF(module);
     return (PyTypeObject*) cls;
@@ -38,8 +38,9 @@ PyTypeObject* get_loop_cls() {
 PyObject* future_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
     Future* self = (Future*) type->tp_alloc(type, 0);
     if (self == NULL)
+
         return NULL;
-    
+
     self->state = pending;
     self->data.pending.result_callbacks = NULL;
     self->loop = NULL;
@@ -53,20 +54,17 @@ int future_init(Future* self, PyObject* args, PyObject* kwds) {
     if (loop_cls == NULL)
         return -1;
     
+    printf("After import %p", PyErr_Occurred());
+
     PyObject* loop = NULL;
     PyObject* label = NULL;
 
-    if (
-        !PyArg_ParseTuple(
-            args,
-            "O!U",
-            loop_cls,
-            &loop,
-            &label
-        )
-    )
+    int parse_result = PyArg_ParseTuple(args, "O!U", loop_cls, &loop, &label);
+    printf("After parse %p", PyErr_Occurred());
+    Py_DECREF(loop_cls);
+    if (!parse_result)
         return -1;
-    
+
     if (loop) {
         Py_XDECREF(self->loop);
         self->loop = Py_NewRef(loop);
@@ -85,6 +83,15 @@ int future_init(Future* self, PyObject* args, PyObject* kwds) {
 }
 
 void _future_destroy_impl(Future* self) {
+    PyObject* exc_type = NULL;
+    PyObject* exc = NULL;
+    PyObject* tb = NULL;
+    
+    // Raise warnings without active exception to protect from crush in exception
+    if (PyErr_Occurred()) {
+        PyErr_Fetch(&exc_type, &exc, &tb);
+        PyErr_Clear();
+    }
     if (self->state == failed && !self->data.failed.exc_retrieved) {
         PyObject* exc = self->data.failed.exc;
         PyErr_WarnFormat(
@@ -110,6 +117,9 @@ void _future_destroy_impl(Future* self) {
             "Feature `%R` is about to be destroyed, but not finished, that normally should never occur.",
             (PyObject*) self
         );
+    }
+    if (exc_type) {
+        PyErr_Restore(exc_type, exc, tb);
     }
 
     Py_XDECREF(self->loop);
@@ -144,8 +154,15 @@ PyObject* future_repr(Future* self) {
     Py_DECREF(state);
     if (state == NULL)
         return NULL;
-    
-    PyObject* res = PyUnicode_FromFormat("<Future label=%R state=%U>", self->label, state_name);
+
+    int clear_label = 0;
+    PyObject* label = self->label;
+    if (label == NULL) {
+        label = PyUnicode_FromString("UNNAMED");
+    }
+    PyObject* res = PyUnicode_FromFormat("<Future label=\"%U\" state=%U>", label, state_name);
+    if (clear_label)
+        Py_DECREF(label);
     Py_DECREF(state_name);
     return res;
 }
@@ -486,7 +503,7 @@ static PyAsyncMethods future_async_methods = {
 
 static PyTypeObject FutureType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "aio.future.cfuture.Future",
+    .tp_name = "aio.future.cimpl.Future",
     .tp_doc = PyDoc_STR("Future C implementation"),
     .tp_basicsize = sizeof(Future),
     .tp_itemsize = 0,
@@ -620,7 +637,7 @@ static PyMethodDef future_await_iter_methods[] = {
 
 static PyTypeObject FutureAwaitIterType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name = "aio.future.cfuture.FutureAwaitIter",
+    .tp_name = "aio.future.cimpl.FutureAwaitIter",
     .tp_doc = PyDoc_STR("Future.__await__ C implementation"),
     .tp_basicsize = sizeof(FutureAwaitIter),
     .tp_itemsize = 0,
@@ -637,13 +654,13 @@ static PyTypeObject FutureAwaitIterType = {
 /* MODULE INITIALIZATION */
 static PyModuleDef cfuture_module = {
     PyModuleDef_HEAD_INIT,
-    .m_name = "aio.future.cfuture",
+    .m_name = "aio.future.cimpl",
     .m_doc = "Future and Task C implementation",
     .m_size = -1,
 };
 
 PyMODINIT_FUNC
-PyInit__cfuture(void)
+PyInit__cimpl(void)
 {
     PyObject *m;
     if (PyType_Ready(&FutureType) < 0)

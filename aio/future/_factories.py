@@ -5,7 +5,7 @@ import sys
 from typing import Any, AsyncContextManager, AsyncIterator, Coroutine, TypeVar
 
 from aio.exceptions import Cancelled, CancelledByChild, CancelledByParent
-from aio.future import cfuture, pure
+from aio.future import cimpl, pure
 from aio.future._priv import current_task_cv
 from aio.interfaces import Future, Promise, Task
 from aio.loop._priv import get_running_loop
@@ -17,8 +17,8 @@ create_task_from_loop = pure.create_task
 
 
 def cancel_future(future: Future[object], msg: str | Cancelled | None = None) -> None:
-    if isinstance(future, cfuture.Future):
-        return cfuture.cancel_future(future, msg)
+    if isinstance(future, cimpl.Future):
+        return cimpl.cancel_future(future, msg)
     elif isinstance(future, pure.Future):
         return pure.cancel_future(future, msg)
 

@@ -1,10 +1,12 @@
+import gc
 import re
+import weakref
 from unittest.mock import Mock
 
 import pytest
 
 from aio import EventLoop, Future, FutureNotReady
-from aio.future.cfuture import Future as CFuture
+from aio.future.cimpl import Future as CFuture
 
 
 class MockLoop(EventLoop):
@@ -39,7 +41,7 @@ def test_constructs(loop):
 
 def test_type(fut):
     type_ = type(fut)
-    assert type_.__module__ == "aio.future.cfuture"
+    assert type_.__module__ == "aio.future.cimpl"
     assert type_.__qualname__ == "Future"
 
 
@@ -57,7 +59,7 @@ def test_running_state(loop):
 
 
 def test_repr(fut):
-    assert repr(fut) == "<Future label='TEST-FUTURE' state=running>"
+    assert repr(fut) == '<Future label="TEST-FUTURE" state=running>'
 
 
 @pytest.mark.parametrize(
@@ -87,6 +89,15 @@ def test_rejects_non_ev_loop_instance(input_, error_msg):
 def test_add_callback_exc(fut, args, expect_exc, expect_err_str):
     with pytest.raises(expect_exc, match=re.escape(expect_err_str)):
         fut.add_callback(*args)
+
+
+def test_add_callback_keeps_single_ref(fut):
+    cb = lambda f: None
+    cb_weak = weakref.ref(cb)
+    fut.add_callback(cb)
+    del cb
+    gc.collect()
+    assert cb_weak() is not None
 
 
 @pytest.mark.parametrize(

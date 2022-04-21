@@ -8,7 +8,7 @@ import pytest
 
 import aio
 from aio.exceptions import CancelledByChild, CancelledByParent, SelfCancelForbidden
-from aio.future import cfuture, pure
+from aio.future import cimpl, pure
 from aio.future._factories import _guard_task, cancel_future
 from aio.future.pure import Task
 from aio.loop._priv import running_loop
@@ -92,7 +92,7 @@ def test_loop_mock(loop, loop_make_step):
 def create_promise(loop):
     if True:
         return lambda th=None: pure.create_promise(loop, th or "test-future")
-    return lambda th=None: cfuture.create_promise(loop, th or "test-future")
+    return lambda th=None: cimpl.create_promise(loop, th or "test-future")
 
 
 @pytest.fixture

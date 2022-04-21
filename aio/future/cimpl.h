@@ -1,5 +1,5 @@
-#ifndef C_FUTURE_MODULE_H
-#define C_FUTURE_MODULE_H
+#ifndef CIMPL_MODULE_H
+#define CIMPL_MODULE_H
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
