@@ -308,7 +308,9 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             case _:
                 return super().state
 
-    def cancel(self, exc: str | Cancelled | None = None) -> None:
+    def _set_result(
+        self, val: T | Literal[_Sentry.NOT_SET] = _Sentry.NOT_SET, exc: BaseException | None = None
+    ) -> None:
         self_cancel_detected = (
             isinstance(self._state, _BaseTaskState)
             and inspect.getcoroutinestate(self._state.coroutine) == "CORO_RUNNING"
@@ -316,11 +318,6 @@ class Task(Future[T], ABCTask[T], Generic[T]):
         if self_cancel_detected:
             raise SelfCancelForbidden
 
-        self._cancel(exc)
-
-    def _set_result(
-        self, val: T | Literal[_Sentry.NOT_SET] = _Sentry.NOT_SET, exc: BaseException | None = None
-    ) -> None:
         if isinstance(self._state, _BaseTaskState) and is_coro_running(self._state.coroutine):
             raise RuntimeError(
                 f"Attempt to finish task before it coroutine finished, task {self!r}. "
@@ -439,7 +436,9 @@ class Task(Future[T], ABCTask[T], Generic[T]):
         return f"<Task label={self._label!r} state={self.state.name} >"
 
 
-def create_promise(loop: EventLoop, label: str | None = None, **context: Any) -> FuturePromise[T]:
+def create_promise(
+    loop: EventLoop, label: str | None = None, /, **context: Any
+) -> FuturePromise[T]:
     future: Future[T] = Future(loop, label=label, **context)
     return FuturePromise(future)
 
@@ -448,6 +447,7 @@ def create_task(
     coroutine: Coroutine[ABCFuture[Any], None, T],
     loop: EventLoop,
     label: str | None = None,
+    /,
 ) -> ABCTask[T]:
     task = Task(coroutine, loop, label)
     task._schedule_first_step()

@@ -9,8 +9,9 @@ import pytest
 import aio
 from aio.exceptions import CancelledByChild, CancelledByParent, SelfCancelForbidden
 from aio.future import cfuture, pure
-from aio.future._factories import _guard_task
+from aio.future._factories import _guard_task, cancel_future
 from aio.future.pure import Task
+from aio.loop._priv import running_loop
 
 
 class SpecialExc(Exception):
@@ -56,7 +57,9 @@ class DummyLoop(aio.EventLoop):
 def loop():
     loop = DummyLoop()
     loop.call_soon = Mock(wraps=loop.call_soon)
-    return loop
+    token = running_loop.set(loop)
+    yield loop
+    running_loop.reset(token)
 
 
 @pytest.fixture
@@ -87,14 +90,14 @@ def test_loop_mock(loop, loop_make_step):
 
 @pytest.fixture
 def create_promise(loop):
-    if False:
-        return lambda th=None: pure.create_promise(th or "test-future", _loop=loop)
+    if True:
+        return lambda th=None: pure.create_promise(loop, th or "test-future")
     return lambda th=None: cfuture.create_promise(loop, th or "test-future")
 
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro, th=None: pure.create_task(coro, loop, label=th or "test-task")
+    return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
 
 
 def finalize_coro(coro_inst: Coroutine):
@@ -601,7 +604,7 @@ class TestTask:
         assert should_be_called.mock_calls == [call()]
 
         cancel_exc = SpecialCancel()
-        task.cancel(cancel_exc)
+        cancel_future(task, cancel_exc)
         loop_make_step()
         assert loop_queue == []
 
@@ -632,13 +635,13 @@ class TestTask:
 
         assert loop.call_soon.mock_calls == [
             call(DirtyIsCallable()),
-            call(DirtyIsCallable(), inner_promise.future),
+            call(DirtyIsCallable(), inner_promise.future, context=ANY),
         ]
 
-        task.cancel()
+        cancel_future(task)
         assert loop.call_soon.mock_calls == [
             call(DirtyIsCallable()),
-            call(DirtyIsCallable(), inner_promise.future),
+            call(DirtyIsCallable(), inner_promise.future, context=ANY),
             call(DirtyIsCallable(), None, aio.Cancelled()),
         ]
 
@@ -651,7 +654,7 @@ class TestTask:
     def test_self_cancel_is_forbidden(self, create_task, loop_make_step):
         async def coroutine():
             self_task = await aio.get_current_task()
-            self_task.cancel()
+            cancel_future(self_task)
 
         task = create_task(coroutine())
         loop_make_step()

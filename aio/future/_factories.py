@@ -12,8 +12,8 @@ from aio.loop._priv import get_running_loop
 
 T = TypeVar("T")
 
-_create_promise = pure.create_promise
-_create_task = pure.create_task
+create_promise_from_loop = pure.create_promise
+create_task_from_loop = pure.create_task
 
 
 def cancel_future(future: Future[object], msg: str | Cancelled | None = None) -> None:
@@ -30,7 +30,7 @@ def cancel_future(future: Future[object], msg: str | Cancelled | None = None) ->
 
 @contextlib.asynccontextmanager
 async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
-    promise = _create_promise(get_running_loop(), label)
+    promise = create_promise_from_loop(get_running_loop(), label)
     try:
         yield promise
     finally:
@@ -41,7 +41,7 @@ async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
 def create_task(
     coro: Coroutine[Future[Any], None, T], label: str | None = None
 ) -> AsyncContextManager[Task[T]]:
-    task = _create_task(coro, get_running_loop(), label)
+    task = create_task_from_loop(coro, get_running_loop(), label)
     return _guard_task(task)
 
 
@@ -56,7 +56,7 @@ async def _guard_task(task: Task[T]) -> AsyncIterator[Task[T]]:
             return
 
         assert isinstance(current_task, Task)  # mypy
-        current_task.cancel(CancelledByChild("Child task finished with an exception"))
+        cancel_future(current_task, CancelledByChild("Child task finished with an exception"))
 
     task.add_callback(on_task_done)
     try:
@@ -65,7 +65,7 @@ async def _guard_task(task: Task[T]) -> AsyncIterator[Task[T]]:
         task.remove_callback(on_task_done)
         if not task.is_finished:
             new_exc = CancelledByParent("Parent task being aborted with an exception")
-            task.cancel(new_exc)
+            cancel_future(task, new_exc)
         raise
     finally:
         task.remove_callback(on_task_done)

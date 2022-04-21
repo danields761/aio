@@ -1,12 +1,10 @@
 from aio import channel
 from aio.exceptions import (
     Cancelled,
-    CancelMultiError,
     FutureError,
     FutureFinishedError,
     FutureNotReady,
     KeyboardCancelled,
-    MultiError,
     NetworkingError,
     SocketConfigurationError,
 )
@@ -30,12 +28,10 @@ from aio.loop.entry import run
 __all__ = [
     "channel",
     "Cancelled",
-    "CancelMultiError",
     "FutureError",
     "FutureFinishedError",
     "FutureNotReady",
     "KeyboardCancelled",
-    "MultiError",
     "NetworkingError",
     "SocketConfigurationError",
     "guard_async_gen",

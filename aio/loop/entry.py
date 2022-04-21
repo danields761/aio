@@ -15,7 +15,7 @@ def run(
     coroutine: Coroutine[Future[Any], None, T],
     **loop_kwargs: Any,
 ) -> T:
-    from aio.future.factories import _create_task
+    from aio.future._factories import create_task_from_loop, cancel_future
 
     policy = get_loop_policy()
     with policy.create_loop(**loop_kwargs) as loop:
@@ -32,12 +32,12 @@ def run(
 
             try:
                 # Cancel will schedule loop callback, and this should wakeup loop selector
-                root_task.cancel(KeyboardCancelled())
+                cancel_future(root_task, KeyboardCancelled())
             except SelfCancelForbidden as exc:
                 raise KeyboardCancelled from exc
 
         received_fut: Future[T] | None = None
-        root_task = _create_task(coroutine, _loop=loop, label="main-task")
+        root_task = create_task_from_loop(coroutine, loop, "main-task")
         root_task.add_callback(receive_result)
 
         with SignalHandlerInstaller(signal.SIGINT, on_keyboard_interrupt), WarnUndoneAsyncGens():

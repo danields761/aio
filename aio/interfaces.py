@@ -235,9 +235,7 @@ class Future(abc.ABC, Generic[T]):
 
 
 class Task(Future[T], abc.ABC, Generic[T]):
-    @abc.abstractmethod
-    def cancel(self, exc: str | Cancelled | None = None, /) -> None:
-        raise NotImplementedError
+    pass
 
 
 class Executor(Protocol):
