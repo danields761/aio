@@ -1,20 +1,22 @@
-from typing import Generic, TypeVar
+from typing import Coroutine, Generic, TypeVar
 
 from aio.exceptions import Cancelled
-from aio.future._cimpl import Future
+from aio.future._cimpl import Future, Task
 from aio.future.utils import coerce_cancel_arg
 from aio.interfaces import EventLoop
 from aio.interfaces import Future as ABCFuture
 from aio.interfaces import Promise as ABCPromise
+from aio.interfaces import Task as ABCTask
 
 ABCFuture.register(Future)
+ABCTask.register(Task)
 
 
 T = TypeVar("T")
 
 
 class FuturePromise(ABCPromise, Generic[T]):
-    __slots__ = ("fut",)
+    __slots__ = ("_fut",)
 
     def __init__(self, fut: Future) -> None:
         self._fut = fut
@@ -45,8 +47,19 @@ def create_promise(loop: EventLoop, label: str | None) -> ABCPromise[T]:
     return FuturePromise(fut)
 
 
-def cancel_future(future: ABCFuture[object], msg: str | Cancelled | None = None) -> None:
-    if not isinstance(future, Future):  # and not isinstance(future, Task):
-        raise TypeError("Could only cancel C futures")
+def create_task(
+    coroutine: Coroutine[ABCFuture[object], None, T], loop: EventLoop, label: str | None = None
+) -> ABCTask[T]:
+    task = Task(coroutine, loop, label or "unnamed")
+    task._schedule()
+    return task
 
-    future._set_exception(coerce_cancel_arg(msg))
+
+def cancel_future(future: ABCFuture[object], msg: str | Cancelled | None = None) -> None:
+    match future:
+        case Future():
+            future._set_exception(coerce_cancel_arg(msg))
+        case Task():
+            future._cancel(coerce_cancel_arg(msg))
+        case _:
+            raise TypeError("Could only cancel C futures")

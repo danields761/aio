@@ -23,6 +23,11 @@ class FutureFinishedError(FutureError):
     pass
 
 
+class AlreadyCancelling(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("Task already being cancelled, but not finished")
+
+
 class Cancelled(BaseException):
     def __init__(self, msg: str | None = None) -> None:
         if msg:
@@ -50,11 +55,11 @@ class CancelledByParent(Cancelled):
 class SelfCancelForbidden(RuntimeError):
     """
     It is forbidden to cancel current task via `cancel` method,
-    raise `aio.Cancelled` directly instead.
+    raise `aio.Cancelled` subclass directly instead.
     """
 
     def __init__(self) -> None:
         super().__init__(
             "It is forbidden to cancel current task via `cancel` method, "
-            "raise `aio.Cancelled` directly instead."
+            "raise `aio.Cancelled` subclass directly instead."
         )

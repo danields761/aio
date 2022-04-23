@@ -1,5 +1,6 @@
 from aio import channel
 from aio.exceptions import (
+    AlreadyCancelling,
     Cancelled,
     FutureError,
     FutureFinishedError,
@@ -34,6 +35,7 @@ __all__ = [
     "KeyboardCancelled",
     "NetworkingError",
     "SocketConfigurationError",
+    "AlreadyCancelling",
     "guard_async_gen",
     "sleep",
     "create_promise",

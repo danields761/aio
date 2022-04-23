@@ -186,6 +186,7 @@ class Future(abc.ABC, Generic[T]):
         created = 0
         scheduled = 1
         running = 2
+        canceling = 3
         finished = 4
 
     @property

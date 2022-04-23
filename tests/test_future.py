@@ -1,17 +1,22 @@
 import gc
 import inspect
 import sys
-from typing import Coroutine
 from unittest.mock import ANY, Mock, call
 
 import pytest
 
 import aio
-from aio.exceptions import CancelledByChild, CancelledByParent, SelfCancelForbidden
+from aio.exceptions import (
+    AlreadyCancelling,
+    CancelledByChild,
+    CancelledByParent,
+    SelfCancelForbidden,
+)
 from aio.future import cimpl, pure
 from aio.future._factories import _guard_task, cancel_future
 from aio.future.pure import Task
 from aio.loop._priv import running_loop
+from tests.utils import finalize_coro
 
 
 class SpecialExc(Exception):
@@ -97,22 +102,9 @@ def create_promise(loop):
 
 @pytest.fixture
 def create_task(loop):
-    return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
-
-
-def finalize_coro(coro_inst: Coroutine):
-    async def wrapper():
-        try:
-            await coro_inst
-        except Exception:
-            pass
-
-    w = wrapper()
-    try:
-        while True:
-            w.send(None)
-    except StopIteration:
-        pass
+    if True:
+        return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
+    return lambda coro, th=None: cimpl.create_task(coro, loop, th or "test-task")
 
 
 class TestFuture:
@@ -154,13 +146,23 @@ class TestFuture:
             _ = future.result()
         assert exc_info.value is test_err
 
+    def test_warns_if_del_and_not_finished(self, create_promise):
+        promise = create_promise()
+
+        with pytest.warns() as warn_cap:
+            del promise
+            assert gc.collect() > 0
+
+        assert ([warn.message for warn in warn_cap.list], len(warn_cap.list)) == (ANY, 1)
+        assert "is about to be destroyed, but not finished" in warn_cap.list[0].message.args[0]
+
     def test_warns_if_exc_not_retrieved(self, create_promise):
         promise = create_promise()
         promise.set_exception(Exception("unretrieved exception"))
 
         with pytest.warns() as warn_cap:
             del promise
-            gc.collect()
+            assert gc.collect() > 0
 
         assert ([warn.message for warn in warn_cap.list], len(warn_cap.list)) == (ANY, 1)
         assert "is about to be destroyed, but her exception " in warn_cap.list[0].message.args[0]
@@ -441,6 +443,23 @@ class TestTask:
         assert task.state == aio.Future.State.finished
         assert task.exception() is task_exc
 
+    @pytest.mark.xfail
+    def test_warns_if_exc_not_retrieved(self, create_task, loop_make_step):
+        async def coro():
+            raise Exception("unretrieved exception")
+
+        task = create_task(coro())
+        loop_make_step()
+
+        assert task.is_finished
+
+        del task
+        with pytest.warns() as warn_cap:
+            assert gc.collect() > 0
+
+        assert ([warn.message for warn in warn_cap.list], len(warn_cap.list)) == (ANY, 1)
+        assert "is about to be destroyed, but her exception " in warn_cap.list[0].message.args[0]
+
     def test_coro_with_single_step_awaits_future(self, create_promise, create_task, loop_make_step):
         promise = create_promise()
         future = promise.future
@@ -635,14 +654,51 @@ class TestTask:
 
         assert loop.call_soon.mock_calls == [
             call(DirtyIsCallable()),
-            call(DirtyIsCallable(), inner_promise.future, context=ANY),
+            call(DirtyIsCallable(), inner_promise.future),
         ]
 
         cancel_future(task)
         assert loop.call_soon.mock_calls == [
             call(DirtyIsCallable()),
-            call(DirtyIsCallable(), inner_promise.future, context=ANY),
-            call(DirtyIsCallable(), None, aio.Cancelled()),
+            call(DirtyIsCallable(), inner_promise.future),
+            call(DirtyIsCallable()),
+        ]
+
+        loop_make_step()
+
+        assert task.is_finished
+        with pytest.raises(aio.Cancelled):
+            task.result()
+
+    def test_inner_twice_cancel_when_awaited_future_finish(
+        self, create_promise, create_task, loop_make_step, loop
+    ):
+        inner_promise = create_promise("inner-future")
+
+        async def coroutine():
+            await inner_promise.future
+
+        task = create_task(coroutine())
+        loop_make_step()
+        inner_promise.set_result(None)
+
+        assert loop.call_soon.mock_calls == [
+            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), inner_promise.future),
+        ]
+
+        cancel_future(task)
+        # This state exists only for a glimpse of an eye, between rare cancellation request
+        #  and next loop step...
+        assert task.state == aio.Future.State.canceling
+
+        with pytest.raises(AlreadyCancelling):
+            cancel_future(task)
+
+        assert loop.call_soon.mock_calls == [
+            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), inner_promise.future),
+            call(DirtyIsCallable()),
         ]
 
         loop_make_step()

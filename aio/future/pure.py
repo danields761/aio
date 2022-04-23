@@ -7,16 +7,19 @@ import traceback
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Coroutine, Generator, Generic, Literal, Mapping, TypeVar
+from typing import Any, Coroutine, Generator, Generic, Literal, TypeVar
 
-from aio.exceptions import Cancelled, FutureFinishedError, FutureNotReady, SelfCancelForbidden
+from aio.exceptions import (
+    AlreadyCancelling,
+    Cancelled,
+    FutureFinishedError,
+    FutureNotReady,
+    SelfCancelForbidden,
+)
 from aio.future._priv import current_task_cv
 from aio.future.utils import coerce_cancel_arg
-from aio.interfaces import EventLoop
-from aio.interfaces import Future as ABCFuture
-from aio.interfaces import FutureResultCallback, Handle
-from aio.interfaces import Promise as ABCPromise
-from aio.interfaces import Task as ABCTask
+from aio.interfaces import EventLoop, Future as ABCFuture, FutureResultCallback, Handle, \
+    Promise as ABCPromise, Task as ABCTask
 from aio.utils import is_coro_running
 
 
@@ -82,12 +85,6 @@ class Future(ABCFuture[T], Generic[T]):
         )
 
         self._label = label
-        self._context: Mapping[str, Any] = {
-            "future": self,
-            "future_label": label,
-            **context,
-        }
-
         self._loop = loop
 
     @property
@@ -175,7 +172,7 @@ class Future(ABCFuture[T], Generic[T]):
             raise RuntimeError("Future must finish before calling callbacks")
 
         return {
-            cb_id: self._loop.call_soon(cb, self, context=self._context)
+            cb_id: self._loop.call_soon(cb, self)
             for cb_id, cb in self._state.result_callbacks.items()
         }
 
@@ -226,8 +223,7 @@ class Future(ABCFuture[T], Generic[T]):
             warnings.warn(
                 (
                     f"Feature `{self}` is about to be destroyed, "
-                    f"but not finished, that normally should never occur "
-                    f"(feature context `{self._context}`)"
+                    "but not finished, that normally should never occur "
                 ),
                 stacklevel=2,
             )
@@ -272,13 +268,25 @@ class _ScheduledState(_BaseTaskState[T], Generic[T]):
 
 
 @dataclass(frozen=True, kw_only=True)
+class _CancellingState(_BaseTaskState[T], Generic[T]):
+    handle: Handle
+    inner_cancel: Cancelled
+    expect_coro_state: Literal["CORO_CREATED"] = "CORO_SUSPENDED"
+
+
+@dataclass(frozen=True, kw_only=True)
 class _RunningState(_BaseTaskState[T], Generic[T]):
     waiting_on: Future[Any]
     expect_coro_state: Literal["CORO_SUSPENDED"] = "CORO_SUSPENDED"
 
 
 _TaskState = (
-    _CreatedState[T] | _ScheduledState[T] | _RunningState[T] | _SuccessState[T] | _FailedState
+    _CreatedState[T]
+    | _ScheduledState[T]
+    | _CancellingState[T]
+    | _RunningState[T]
+    | _SuccessState[T]
+    | _FailedState
 )
 
 
@@ -305,6 +313,8 @@ class Task(Future[T], ABCTask[T], Generic[T]):
                 return ABCFuture.State.scheduled
             case _RunningState():
                 return ABCFuture.State.running
+            case _CancellingState():
+                return ABCFuture.State.canceling
             case _:
                 return super().state
 
@@ -313,6 +323,7 @@ class Task(Future[T], ABCTask[T], Generic[T]):
     ) -> None:
         self_cancel_detected = (
             isinstance(self._state, _BaseTaskState)
+            and isinstance(exc, Cancelled)
             and inspect.getcoroutinestate(self._state.coroutine) == "CORO_RUNNING"
         )
         if self_cancel_detected:
@@ -320,7 +331,7 @@ class Task(Future[T], ABCTask[T], Generic[T]):
 
         if isinstance(self._state, _BaseTaskState) and is_coro_running(self._state.coroutine):
             raise RuntimeError(
-                f"Attempt to finish task before it coroutine finished, task {self!r}. "
+                f"Attempt to finish task {self!r} before it coroutine finished. "
                 "Setting task result allowed either when coroutine finished normally, or "
                 "if it not started."
             )
@@ -342,13 +353,20 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             case _RunningState(waiting_on=waiting_on) if not waiting_on.is_finished:
                 # Recursively cancel all inner tasks
                 cancel_future(waiting_on, exc)
-            case _RunningState(waiting_on=waiting_on):
+            case _RunningState() as old_state:
                 # In case, if awaited future already finished, we can't cancel it, so there
                 #  is workaround called "inner cancel", e.g. cancellation, which emitted right in
                 #  coroutine via `Coroutine.throw` method, opposite to standard approach, when
                 #  futures cancelled recursively, and then they propagate cancellation back
-                waiting_on.remove_callback(self._execute_coroutine_step)
-                self.loop.call_soon(self._execute_coroutine_step, None, coerce_cancel_arg(exc))
+                old_state.waiting_on.remove_callback(self._execute_coroutine_step)
+                self._state = _CancellingState(
+                    self._state.result_callbacks,
+                    coroutine=old_state.coroutine,
+                    handle=self._loop.call_soon(self._execute_coroutine_step),
+                    inner_cancel=coerce_cancel_arg(exc),
+                )
+            case _CancellingState():
+                raise AlreadyCancelling
             case _CreatedState() | _:
                 super()._cancel(exc)
 
@@ -362,21 +380,14 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             handle=self._loop.call_soon(self._execute_coroutine_step),
         )
 
-    def _execute_coroutine_step(
-        self, _: ABCFuture[Any] | None = None, inner_cancel: Cancelled | None = None
-    ) -> None:
-        if not isinstance(self._state, _ScheduledState | _RunningState):
+    def _execute_coroutine_step(self, _: ABCFuture[Any] | None = None) -> None:
+        if not isinstance(self._state, _ScheduledState | _RunningState | _CancellingState):
             raise RuntimeError("Trying to resume finished task")
-
-        if inner_cancel and not self._state.waiting_on.is_finished:
-            raise RuntimeError(
-                "Inner task cancel was requested, but awaited future is not finished!"
-            )
 
         cv_context = contextvars.copy_context()
         try:
             try:
-                future = cv_context.run(self._send_to_coroutine_within_new_context, inner_cancel)
+                future = cv_context.run(self._send_to_coroutine_within_new_context)
             except _TaskInnerError:
                 raise
             except StopIteration as exc:
@@ -410,21 +421,20 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             waiting_on=future,
         )
 
-    def _send_to_coroutine_within_new_context(
-        self, inner_cancel: Cancelled | None = None
-    ) -> Future[Any]:
-        assert isinstance(self._state, _ScheduledState | _RunningState)
-        if inner_cancel:
-            assert self._state.waiting_on.is_finished
+    def _send_to_coroutine_within_new_context(self) -> Future[Any]:
+        assert isinstance(self._state, _ScheduledState | _RunningState | _CancellingState)
 
         reset_token = current_task_cv.set(self)
         try:
-            if not inner_cancel:
-                maybe_feature = self._state.coroutine.send(None)
-            else:
-                maybe_feature = self._state.coroutine.throw(
-                    type(inner_cancel), inner_cancel, inner_cancel.__traceback__
-                )
+            match self._state:
+                case _RunningState() | _ScheduledState():
+                    maybe_feature = self._state.coroutine.send(None)
+                case _CancellingState(inner_cancel=inner_cancel):
+                    maybe_feature = self._state.coroutine.throw(
+                        type(inner_cancel), inner_cancel, inner_cancel.__traceback__
+                    )
+                case _:
+                    raise _TaskInnerError("Unexpected future state")
 
             if not isinstance(maybe_feature, ABCFuture):
                 raise _TaskInnerError("All `aio` coroutines must yield and `Feature` instance")
