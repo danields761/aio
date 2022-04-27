@@ -28,6 +28,7 @@ from aio.loop.entry import run
 
 __all__ = [
     "channel",
+    "AlreadyCancelling",
     "Cancelled",
     "FutureError",
     "FutureFinishedError",
@@ -35,7 +36,6 @@ __all__ = [
     "KeyboardCancelled",
     "NetworkingError",
     "SocketConfigurationError",
-    "AlreadyCancelling",
     "guard_async_gen",
     "sleep",
     "create_promise",

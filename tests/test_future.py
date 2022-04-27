@@ -1,20 +1,13 @@
 import gc
-import inspect
 import sys
 from unittest.mock import ANY, Mock, call
 
 import pytest
 
 import aio
-from aio.exceptions import (
-    AlreadyCancelling,
-    CancelledByChild,
-    CancelledByParent,
-    SelfCancelForbidden,
-)
+from aio.exceptions import AlreadyCancelling, CancelledByChild, CancelledByParent
 from aio.future import cimpl, pure
 from aio.future._factories import _guard_task, cancel_future
-from aio.future.pure import Task
 from aio.loop._priv import running_loop
 from tests.utils import finalize_coro
 
@@ -93,18 +86,31 @@ def test_loop_mock(loop, loop_make_step):
     ]
 
 
-@pytest.fixture
-def create_promise(loop):
-    if True:
-        return lambda th=None: pure.create_promise(loop, th or "test-future")
-    return lambda th=None: cimpl.create_promise(loop, th or "test-future")
+@pytest.fixture(params=["cimpl", "pure"])
+def impl(request):
+    match request.param:
+        case "cimpl":
+            return cimpl
+        case "pure":
+            return pure
+        case _:
+            raise RuntimeError(f"Unexpected impl requested: {request.param}")
 
 
 @pytest.fixture
-def create_task(loop):
-    if True:
-        return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
-    return lambda coro, th=None: cimpl.create_task(coro, loop, th or "test-task")
+def create_promise(impl, loop):
+    # if False:
+    #     return lambda th=None: pure.create_promise(loop, th or "test-future")
+    # return lambda th=None: cimpl.create_promise(loop, th or "test-future")
+    return lambda th=None: impl.create_promise(loop, th or "test-future")
+
+
+@pytest.fixture
+def create_task(impl, loop):
+    # if False:
+    #     return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
+    # return lambda coro, th=None: cimpl.create_task(coro, loop, th or "test-task")
+    return lambda coro, th=None: impl.create_task(coro, loop, th or "test-task")
 
 
 class TestFuture:
@@ -381,23 +387,6 @@ class DirtyIsCallable:
 
 
 class TestTask:
-    def test_task_starting_state(self):
-        async def coroutine():
-            pass
-
-        coro = coroutine()
-        task = Task(coro, Mock(name="loop"))
-        assert not task.is_finished
-        assert task.state == aio.Future.State.created
-
-        assert inspect.getcoroutinestate(task._state.coroutine) == "CORO_CREATED"
-        task._cancel("Test end clean-up")
-        # Retrieve exception to prevent unretrieved exception warning
-        with pytest.raises(aio.Cancelled):
-            task.result()
-        # Prevent un-awaited coroutine warning
-        finalize_coro(coro)
-
     def test_create_task_schedules_first_step(self, create_task, loop_make_step, loop_queue):
         task_result = Mock(name="coro-result")
 
@@ -406,10 +395,12 @@ class TestTask:
 
         coro = coroutine()
         task = create_task(coro)
-        assert (task._execute_coroutine_step, ()) in loop_queue
+        assert (task._step, (None,)) in loop_queue
         assert task.state == aio.Future.State.scheduled
 
-        task._cancel("Test end clean-up")
+        cancel_future(task, "Test end clean-up")
+        loop_make_step()
+
         # Retrieve exception to prevent unretrieved exception warning
         with pytest.raises(aio.Cancelled):
             task.result()
@@ -423,7 +414,9 @@ class TestTask:
             return task_result
 
         task = create_task(coro())
-        assert (task._execute_coroutine_step, ()) in loop_queue
+        assert task.state == aio.Future.State.scheduled
+
+        assert (task._step, (None,)) in loop_queue
         loop_make_step()
 
         assert task.is_finished
@@ -516,7 +509,7 @@ class TestTask:
 
         task = create_task(coro())
         loop_make_step()
-        assert task._state.waiting_on is promise0.future
+        # assert task._state.waiting_on is promise0.future
         assert root.mock_calls == [call.before_first()]
         assert not task.is_finished
 
@@ -524,7 +517,7 @@ class TestTask:
         assert root.mock_calls == [call.before_first()]
 
         loop_make_step()
-        assert task._state.waiting_on is promise1.future
+        # assert task._state.waiting_on is promise1.future
         assert root.mock_calls == [
             call.before_first(),
             call.after_first(),
@@ -583,24 +576,6 @@ class TestTask:
         assert task.is_finished
         assert task.result() == (future_exc0, future_result1)
 
-    def test_cancel_do_not_await_unscheduled_inner_coro(self):
-        should_never_be_called = Mock(name="should_never_be_called")
-
-        async def coro():
-            should_never_be_called()
-
-        coro_inst = coro()
-        task = Task(coro_inst, Mock(name="loop"))
-        task._cancel()
-
-        assert should_never_be_called.mock_calls == []
-
-        # Retrieve exception to prevent unretrieved exception warning
-        with pytest.raises(aio.Cancelled):
-            task.result()
-        # Avoid un-awaited coroutine warning
-        finalize_coro(coro_inst)
-
     def test_cancel_also_cancels_inner_future(
         self, create_promise, create_task, loop_make_step, loop_queue
     ):
@@ -621,6 +596,7 @@ class TestTask:
         loop_make_step()
 
         assert should_be_called.mock_calls == [call()]
+        assert task.state == aio.Future.State.running
 
         cancel_exc = SpecialCancel()
         cancel_future(task, cancel_exc)
@@ -638,6 +614,22 @@ class TestTask:
 
         assert should_never_be_called.mock_calls == []
 
+    def test_cancel_scheduled(self, create_task, loop_make_step):
+        should_not_be_called = Mock()
+
+        async def coroutine():
+            should_not_be_called()
+
+        task = create_task(coroutine())
+        assert task.state == aio.Future.State.scheduled
+        cancel_future(task)
+        assert task.state == aio.Future.State.cancelling
+
+        loop_make_step()
+        assert task.state == aio.Future.State.finished
+        with pytest.raises(aio.Cancelled):
+            task.result()
+
     def test_inner_cancel_when_awaited_future_finish(
         self, create_promise, create_task, loop_make_step, loop
     ):
@@ -649,19 +641,19 @@ class TestTask:
         task = create_task(coroutine())
         loop_make_step()
 
-        assert task._state.waiting_on is inner_promise.future
         inner_promise.set_result(None)
 
         assert loop.call_soon.mock_calls == [
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
             call(DirtyIsCallable(), inner_promise.future),
         ]
 
         cancel_future(task)
+        assert task.state == aio.Future.State.cancelling
         assert loop.call_soon.mock_calls == [
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
             call(DirtyIsCallable(), inner_promise.future),
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
         ]
 
         loop_make_step()
@@ -683,22 +675,22 @@ class TestTask:
         inner_promise.set_result(None)
 
         assert loop.call_soon.mock_calls == [
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
             call(DirtyIsCallable(), inner_promise.future),
         ]
 
         cancel_future(task)
         # This state exists only for a glimpse of an eye, between rare cancellation request
         #  and next loop step...
-        assert task.state == aio.Future.State.canceling
+        assert task.state == aio.Future.State.cancelling
 
         with pytest.raises(AlreadyCancelling):
             cancel_future(task)
 
         assert loop.call_soon.mock_calls == [
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
             call(DirtyIsCallable(), inner_promise.future),
-            call(DirtyIsCallable()),
+            call(DirtyIsCallable(), None),
         ]
 
         loop_make_step()
@@ -707,16 +699,17 @@ class TestTask:
         with pytest.raises(aio.Cancelled):
             task.result()
 
-    def test_self_cancel_is_forbidden(self, create_task, loop_make_step):
+    def test_self_cancel_raises_cancellation_eagerly(self, create_task, loop_make_step):
         async def coroutine():
             self_task = await aio.get_current_task()
-            cancel_future(self_task)
+            cancel_future(self_task, "Self cancel")
 
         task = create_task(coroutine())
         loop_make_step()
 
         assert task.is_finished
-        assert isinstance(task.exception(), SelfCancelForbidden)
+        with pytest.raises(aio.Cancelled, match="Self cancel"):
+            task.result()
 
     @pytest.mark.xfail
     def test_after_task_step_completed_future_dont_hold_task_ref(
@@ -730,9 +723,9 @@ class TestTask:
         async def coroutine():
             await promise.future
 
-        task = create_task(coroutine())
+        coro = coroutine()
+        task = create_task(coro)
         loop_make_step()
-        assert task._state.waiting_on is promise.future
 
         refs_before = sys.getrefcount(task)
 

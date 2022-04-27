@@ -49,7 +49,7 @@ class IOSelectorRegistry(abc.ABC):
 
 
 class IOSelector(abc.ABC):
-    def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int]]:
+    def select(self, time_: float | None) -> list[tuple[IOEventCallback, int, int, OSError | None]]:
         raise NotImplementedError
 
     def wakeup_thread_safe(self) -> None:
@@ -186,7 +186,7 @@ class Future(abc.ABC, Generic[T]):
         created = 0
         scheduled = 1
         running = 2
-        canceling = 3
+        cancelling = 3
         finished = 4
 
     @property

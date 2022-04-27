@@ -7,8 +7,9 @@ import traceback
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Coroutine, Generator, Generic, Literal, TypeVar
+from typing import AbstractSet, Any, Coroutine, Generator, Generic, Literal, TypeVar
 
+import aio
 from aio.exceptions import (
     AlreadyCancelling,
     Cancelled,
@@ -18,9 +19,11 @@ from aio.exceptions import (
 )
 from aio.future._priv import current_task_cv
 from aio.future.utils import coerce_cancel_arg
-from aio.interfaces import EventLoop, Future as ABCFuture, FutureResultCallback, Handle, \
-    Promise as ABCPromise, Task as ABCTask
-from aio.utils import is_coro_running
+from aio.interfaces import EventLoop
+from aio.interfaces import Future as ABCFuture
+from aio.interfaces import FutureResultCallback, Handle
+from aio.interfaces import Promise as ABCPromise
+from aio.interfaces import Task as ABCTask
 
 
 class _Sentry(Enum):
@@ -243,13 +246,13 @@ class Future(ABCFuture[T], Generic[T]):
 
 @dataclass(frozen=True, kw_only=True)
 class _BaseTaskState(_PendingState[T], Generic[T]):
-    expect_coro_state: str
+    expect_coro_state: AbstractSet[str]
     coroutine: Coroutine[ABCFuture[Any], None, T]
 
     def __post_init__(self) -> None:
         coro_state = inspect.getcoroutinestate(self.coroutine)
         expect_state = self.expect_coro_state
-        if coro_state != expect_state:
+        if coro_state not in expect_state:
             raise RuntimeError(
                 "Inconsistent task state: "
                 f"coroutine in state {coro_state!r}, but {expect_state!r} expected"
@@ -258,26 +261,26 @@ class _BaseTaskState(_PendingState[T], Generic[T]):
 
 @dataclass(frozen=True, kw_only=True)
 class _CreatedState(_BaseTaskState[T], Generic[T]):
-    expect_coro_state: Literal["CORO_CREATED"] = "CORO_CREATED"
+    expect_coro_state: AbstractSet[str] = frozenset({"CORO_CREATED"})
 
 
 @dataclass(frozen=True, kw_only=True)
 class _ScheduledState(_BaseTaskState[T], Generic[T]):
     handle: Handle
-    expect_coro_state: Literal["CORO_CREATED"] = "CORO_CREATED"
+    expect_coro_state: Literal["CORO_CREATED"] = frozenset({"CORO_CREATED"})
 
 
 @dataclass(frozen=True, kw_only=True)
 class _CancellingState(_BaseTaskState[T], Generic[T]):
     handle: Handle
     inner_cancel: Cancelled
-    expect_coro_state: Literal["CORO_CREATED"] = "CORO_SUSPENDED"
+    expect_coro_state: AbstractSet[str] = frozenset({"CORO_SUSPENDED", "CORO_CREATED"})
 
 
 @dataclass(frozen=True, kw_only=True)
 class _RunningState(_BaseTaskState[T], Generic[T]):
     waiting_on: Future[Any]
-    expect_coro_state: Literal["CORO_SUSPENDED"] = "CORO_SUSPENDED"
+    expect_coro_state: AbstractSet[str] = frozenset({"CORO_SUSPENDED"})
 
 
 _TaskState = (
@@ -314,60 +317,69 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             case _RunningState():
                 return ABCFuture.State.running
             case _CancellingState():
-                return ABCFuture.State.canceling
+                return ABCFuture.State.cancelling
             case _:
                 return super().state
 
     def _set_result(
         self, val: T | Literal[_Sentry.NOT_SET] = _Sentry.NOT_SET, exc: BaseException | None = None
     ) -> None:
-        self_cancel_detected = (
-            isinstance(self._state, _BaseTaskState)
-            and isinstance(exc, Cancelled)
-            and inspect.getcoroutinestate(self._state.coroutine) == "CORO_RUNNING"
-        )
-        if self_cancel_detected:
-            raise SelfCancelForbidden
+        if isinstance(self._state, _BaseTaskState):
+            coro_state = inspect.getcoroutinestate(self._state.coroutine)
+            self_cancel_detected = isinstance(exc, Cancelled) and coro_state == "CORO_RUNNING"
+            if self_cancel_detected:
+                raise SelfCancelForbidden
 
-        if isinstance(self._state, _BaseTaskState) and is_coro_running(self._state.coroutine):
-            raise RuntimeError(
-                f"Attempt to finish task {self!r} before it coroutine finished. "
-                "Setting task result allowed either when coroutine finished normally, or "
-                "if it not started."
-            )
+            if isinstance(self._state, _BaseTaskState) and coro_state != "CORO_CLOSED":
+                raise RuntimeError(
+                    f"Attempt to finish task {self!r} before it coroutine finished. "
+                    f"Current coroutine state {coro_state!r}. Setting task result "
+                    "allowed only when coroutine finished normally."
+                )
 
         super()._set_result(val, exc)
+
+    def _go_to_inner_cancellation(self, exc: str | Cancelled | None = None) -> None:
+        assert isinstance(self._state, _CreatedState | _ScheduledState | _RunningState)
+
+        handle = self._loop.call_soon(self._step, None)
+        self._state = _CancellingState(
+            self._state.result_callbacks,
+            coroutine=self._state.coroutine,
+            handle=handle,
+            inner_cancel=coerce_cancel_arg(exc),
+        )
 
     def _cancel(self, exc: str | Cancelled | None = None) -> None:
         from aio.future._factories import cancel_future
 
-        if not isinstance(self._state, _PendingState):
+        if not isinstance(self._state, _BaseTaskState):
             raise FutureFinishedError
 
+        if inspect.getcoroutinestate(self._state.coroutine) == "CORO_RUNNING":
+            raise coerce_cancel_arg(exc)
+
         match self._state:
+            case _CreatedState():
+                self._go_to_inner_cancellation(exc)
             case _ScheduledState(handle=handle):
                 assert not handle.executed, "Handle being executed, but state not changed"
                 # Cancel scheduled first step and set cancelled result
                 handle.cancel()
-                super()._cancel(exc)
+                self._go_to_inner_cancellation(exc)
             case _RunningState(waiting_on=waiting_on) if not waiting_on.is_finished:
                 # Recursively cancel all inner tasks
                 cancel_future(waiting_on, exc)
-            case _RunningState() as old_state:
+            case _RunningState():
                 # In case, if awaited future already finished, we can't cancel it, so there
                 #  is workaround called "inner cancel", e.g. cancellation, which emitted right in
                 #  coroutine via `Coroutine.throw` method, opposite to standard approach, when
                 #  futures cancelled recursively, and then they propagate cancellation back
-                old_state.waiting_on.remove_callback(self._execute_coroutine_step)
-                self._state = _CancellingState(
-                    self._state.result_callbacks,
-                    coroutine=old_state.coroutine,
-                    handle=self._loop.call_soon(self._execute_coroutine_step),
-                    inner_cancel=coerce_cancel_arg(exc),
-                )
+                self._state.waiting_on.remove_callback(self._step)
+                self._go_to_inner_cancellation(exc)
             case _CancellingState():
                 raise AlreadyCancelling
-            case _CreatedState() | _:
+            case _:
                 super()._cancel(exc)
 
     def _schedule_first_step(self) -> None:
@@ -377,10 +389,10 @@ class Task(Future[T], ABCTask[T], Generic[T]):
         self._state = _ScheduledState(
             self._state.result_callbacks,
             coroutine=self._state.coroutine,
-            handle=self._loop.call_soon(self._execute_coroutine_step),
+            handle=self._loop.call_soon(self._step, None),
         )
 
-    def _execute_coroutine_step(self, _: ABCFuture[Any] | None = None) -> None:
+    def _step(self, _: ABCFuture[Any] | None, /) -> None:
         if not isinstance(self._state, _ScheduledState | _RunningState | _CancellingState):
             raise RuntimeError("Trying to resume finished task")
 
@@ -394,12 +406,12 @@ class Task(Future[T], ABCTask[T], Generic[T]):
                 val: T = exc.value
                 self._set_result(val=val)
                 return
-            except BaseException as exc:
+            except (Exception, aio.Cancelled) as exc:
                 self._set_result(exc=exc)
                 return
         finally:
             if isinstance(self._state, _RunningState):
-                self._state.waiting_on.remove_callback(self._execute_coroutine_step)
+                self._state.waiting_on.remove_callback(self._step)
 
         if future is self:
             raise RuntimeError(
@@ -414,7 +426,7 @@ class Task(Future[T], ABCTask[T], Generic[T]):
                 "does not belong to the same loop"
             )
 
-        future.add_callback(self._execute_coroutine_step)
+        future.add_callback(self._step)
         self._state = _RunningState(
             result_callbacks=self._state.result_callbacks,
             coroutine=self._state.coroutine,
