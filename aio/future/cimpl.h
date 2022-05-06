@@ -4,6 +4,19 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
+
+// Utils
+enum CoroState {
+    CORO_CREATED = 1 << 0,
+    CORO_RUNNING = 1 << 1,
+    CORO_SUSPENDED = 1 << 2,
+    CORO_CLOSED = 1 << 3
+};
+
+enum CoroState get_coroutine_state(PyCoroObject* coroutine);
+
+
+// Future class
 enum FutureState {
     pending,
     success,
@@ -49,6 +62,7 @@ PyObject* future_is_finished_getter(Future* self, void* closure);
 PyObject* future_is_cancelled_getter(Future* self, void* closure);
 PyObject* future_await(Future* self, PyObject* _);
 
+
 // FutureAwaitIter class
 typedef struct {
     PyObject_HEAD
@@ -69,10 +83,61 @@ PyObject* future_await_iter_close(FutureAwaitIter* self, PyObject* arg);
 
 
 // Task class
-typedef struct {
-    PyObject_HEAD
-
-    Future super;
+enum TaskState {
+    TASK_FUT_STATE,
+    TASK_CREATED,
+    TASK_SCHEDULED,
+    TASK_CANCELLING,
+    TASK_RUNNING_STATE
 };
+
+typedef struct {
+} _TaskCreatedData;
+
+typedef struct {
+    PyObject* handle;
+} _TaskScheduledData;
+
+typedef struct {
+    PyObject* waiting_on;
+} _TaskRunningData;
+
+typedef struct {
+    PyObject* handle;
+    PyObject* inner_cancellation;
+} _TaskCancelling;
+
+typedef struct {
+} _TaskFutData;
+
+typedef union {
+    _TaskCreatedData created;
+    _TaskScheduledData scheduled;
+    _TaskRunningData running;
+    _TaskCancelling cancelling;
+    _TaskFutData fut;
+} _TaskData;
+
+typedef struct {
+    Future super;
+
+    enum TaskState state;
+    _TaskData data;
+
+    PyObject* context;
+
+    PyCoroObject* coroutine;
+    PyObject* step_fn_as_callback;
+} Task;
+
+static PyTypeObject TaskType;
+
+PyObject* task_new(PyTypeObject *type, PyObject *args, PyObject *kwds);
+int task_init(Task* self, PyObject* args, PyObject* kwds);
+void task_destroy(Task* self);
+PyObject* task_repr(Task* self);
+PyObject* task_state_getter(Task* self, void* closure);
+PyObject* task_schdule(Task* self, PyObject* _);
+PyObject* task_cancel(Task* self, PyObject* cancellation);
 
 #endif

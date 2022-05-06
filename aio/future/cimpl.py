@@ -1,4 +1,4 @@
-from typing import Coroutine, Generic, TypeVar
+from typing import Coroutine, Generic, TypeVar, cast
 
 from aio.exceptions import Cancelled
 from aio.future._cimpl import Future, Task
@@ -15,7 +15,7 @@ ABCTask.register(Task)
 T = TypeVar("T")
 
 
-class FuturePromise(ABCPromise, Generic[T]):
+class FuturePromise(ABCPromise[T], Generic[T]):
     __slots__ = ("_fut",)
 
     def __init__(self, fut: Future) -> None:
@@ -39,7 +39,7 @@ class FuturePromise(ABCPromise, Generic[T]):
 
     @property
     def future(self) -> ABCFuture[T]:
-        return self._fut
+        return cast(ABCFuture[T], self._fut)
 
 
 def create_promise(loop: EventLoop, label: str | None) -> ABCPromise[T]:
@@ -52,14 +52,15 @@ def create_task(
 ) -> ABCTask[T]:
     task = Task(coroutine, loop, label or "unnamed")
     task._schedule()
-    return task
+    assert isinstance(task, ABCTask)
+    return cast(ABCTask[T], task)
 
 
 def cancel_future(future: ABCFuture[object], msg: str | Cancelled | None = None) -> None:
     match future:
-        case Future():
-            future._set_exception(coerce_cancel_arg(msg))
-        case Task():
+        case Task():  # type: ignore[misc]
             future._cancel(coerce_cancel_arg(msg))
+        case Future():  # type: ignore[misc]
+            future._set_exception(coerce_cancel_arg(msg))
         case _:
             raise TypeError("Could only cancel C futures")

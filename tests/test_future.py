@@ -99,17 +99,11 @@ def impl(request):
 
 @pytest.fixture
 def create_promise(impl, loop):
-    # if False:
-    #     return lambda th=None: pure.create_promise(loop, th or "test-future")
-    # return lambda th=None: cimpl.create_promise(loop, th or "test-future")
     return lambda th=None: impl.create_promise(loop, th or "test-future")
 
 
 @pytest.fixture
 def create_task(impl, loop):
-    # if False:
-    #     return lambda coro, th=None: pure.create_task(coro, loop, th or "test-task")
-    # return lambda coro, th=None: cimpl.create_task(coro, loop, th or "test-task")
     return lambda coro, th=None: impl.create_task(coro, loop, th or "test-task")
 
 
