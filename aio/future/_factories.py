@@ -16,7 +16,7 @@ create_promise_from_loop = pure.create_promise
 create_task_from_loop = pure.create_task
 
 
-def cancel_future(future: Future[object], msg: str | Cancelled | None = None) -> None:
+def cancel_future(future: Future[Any], msg: str | Cancelled | None = None) -> None:
     if isinstance(future, cimpl.Future):
         return cimpl.cancel_future(future, msg)
     elif isinstance(future, pure.Future):
@@ -30,7 +30,7 @@ def cancel_future(future: Future[object], msg: str | Cancelled | None = None) ->
 
 @contextlib.asynccontextmanager
 async def create_promise(label: str | None = None) -> AsyncIterator[Promise[T]]:
-    promise = create_promise_from_loop(get_running_loop(), label)
+    promise: Promise[T] = create_promise_from_loop(get_running_loop(), label)
     try:
         yield promise
     finally:

@@ -65,26 +65,26 @@ class FuturePromise(ABCPromise[T]):
 
 @dataclass(frozen=True)
 class _PendingState(Generic[T]):
-    result_callbacks: dict[int, FutureResultCallback[T]]
+    result_callbacks: set[FutureResultCallback[T]]
 
 
 @dataclass
 class _SuccessState(Generic[T]):
     result: T
-    scheduled_cbs: dict[int, Handle]
+    scheduled_cbs: dict[FutureResultCallback[T], Handle]
 
 
 @dataclass
 class _FailedState:
     exc: BaseException
     exc_retrieved: bool
-    scheduled_cbs: dict[int, Handle]
+    scheduled_cbs: dict[FutureResultCallback[Any], Handle]
 
 
 class Future(ABCFuture[T], Generic[T]):
-    def __init__(self, loop: EventLoop, label: str | None = None, **context: Any) -> None:
+    def __init__(self, loop: EventLoop, label: str | None = None) -> None:
         self._state: _PendingState[T] | _SuccessState[T] | _FailedState = _PendingState(
-            result_callbacks={}
+            result_callbacks=set()
         )
 
         self._label = label
@@ -139,7 +139,7 @@ class Future(ABCFuture[T], Generic[T]):
     def add_callback(self, cb: FutureResultCallback[T]) -> None:
         match self._state:
             case _PendingState(result_callbacks=cbs):
-                cbs[cb] = cb
+                cbs.add(cb)
             case _SuccessState() | _FailedState():
                 raise FutureFinishedError("Could not schedule callback for already finished future")
             case _:
@@ -149,8 +149,8 @@ class Future(ABCFuture[T], Generic[T]):
         match self._state:
             case _PendingState(result_callbacks=cbs):
                 try:
-                    del cbs[cb]
-                except KeyError:
+                    cbs.remove(cb)
+                except (KeyError, ValueError):
                     pass
             case _SuccessState(scheduled_cbs=cbs) | _FailedState(scheduled_cbs=cbs):
                 try:
@@ -170,14 +170,11 @@ class Future(ABCFuture[T], Generic[T]):
     def is_cancelled(self) -> bool:
         return isinstance(self._state, _FailedState) and isinstance(self._state.exc, Cancelled)
 
-    def _schedule_callbacks(self) -> dict[int, Handle]:
+    def _schedule_callbacks(self) -> dict[FutureResultCallback[Any], Handle]:
         if not isinstance(self._state, _PendingState):
             raise RuntimeError("Future must finish before calling callbacks")
 
-        return {
-            cb_id: self._loop.call_soon(cb, self)
-            for cb_id, cb in self._state.result_callbacks.items()
-        }
+        return {cb: self._loop.call_soon(cb, self) for cb in self._state.result_callbacks}
 
     def _set_result(
         self,
@@ -267,7 +264,7 @@ class _CreatedState(_BaseTaskState[T], Generic[T]):
 @dataclass(frozen=True, kw_only=True)
 class _ScheduledState(_BaseTaskState[T], Generic[T]):
     handle: Handle
-    expect_coro_state: Literal["CORO_CREATED"] = frozenset({"CORO_CREATED"})
+    expect_coro_state: AbstractSet[str] = frozenset({"CORO_CREATED"})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -279,7 +276,7 @@ class _CancellingState(_BaseTaskState[T], Generic[T]):
 
 @dataclass(frozen=True, kw_only=True)
 class _RunningState(_BaseTaskState[T], Generic[T]):
-    waiting_on: Future[Any]
+    waiting_on: ABCFuture[Any]
     expect_coro_state: AbstractSet[str] = frozenset({"CORO_SUSPENDED"})
 
 
@@ -304,8 +301,8 @@ class Task(Future[T], ABCTask[T], Generic[T]):
         loop: EventLoop,
         label: str | None = None,
     ) -> None:
-        super().__init__(loop, label, task=self, future=None)
-        self._state: _TaskState = _CreatedState(result_callbacks={}, coroutine=coroutine)
+        super().__init__(loop, label)
+        self._state: _TaskState[T] = _CreatedState(result_callbacks=set(), coroutine=coroutine)
 
     @property
     def state(self) -> ABCFuture.State:
@@ -433,7 +430,7 @@ class Task(Future[T], ABCTask[T], Generic[T]):
             waiting_on=future,
         )
 
-    def _send_to_coroutine_within_new_context(self) -> Future[Any]:
+    def _send_to_coroutine_within_new_context(self) -> ABCFuture[Any]:
         assert isinstance(self._state, _ScheduledState | _RunningState | _CancellingState)
 
         reset_token = current_task_cv.set(self)
