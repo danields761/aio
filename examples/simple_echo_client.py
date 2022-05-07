@@ -1,10 +1,6 @@
 import socket
 
 import aio
-import aio.loop.uv.policy
-
-
-aio.loop.set_loop_policy(aio.loop.uv.policy.UVPolicy())
 
 
 async def client(host: str, port: int) -> None:

@@ -45,7 +45,10 @@ class BaseLoopPolicy(LoopPolicy[BaseEventLoop]):
         with selector_factory() as selector:
             self._selector = selector
             self._loop = loop = BaseEventLoop(selector, **loop_kwargs)
-            yield loop
+            try:
+                yield loop
+            finally:
+                self._loop = self._selector = None
 
     def create_loop_runner(self, loop: BaseEventLoop) -> LoopRunner[BaseEventLoop]:
         return BaseLoopRunner(loop)

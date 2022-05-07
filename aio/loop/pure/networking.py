@@ -5,7 +5,7 @@ import selectors
 import socket
 from collections import defaultdict
 from contextlib import closing, contextmanager
-from typing import Any, ContextManager, Iterator, Literal
+from typing import Any, ContextManager, Iterator, Literal, cast
 
 from aio.exceptions import SocketConfigurationError
 from aio.interfaces import (
@@ -17,8 +17,8 @@ from aio.interfaces import (
     SocketAddress,
     SocketLike,
 )
-from aio.types import Logger, STDSelector
-from aio.utils import get_logger
+from aio.types import HasFileno, Logger, STDSelector
+from aio.utils import assert_never, get_logger
 
 _SelectorKeyData = set[tuple[int, IOEventCallback]]
 
@@ -56,7 +56,10 @@ class _SelectorWakeupper:
                 sender_socket_fileno=self._sender.fileno(),
             )
 
-    def _on_receiver_input(self, _: int, __: int) -> None:
+    def _on_receiver_input(self, _: int, __: int, exc: OSError | None) -> None:
+        if exc:
+            self._logger.warning("Self-pipe select error", exc=exc)
+
         self._logger.debug("Self-pipe received READ event")
         try:
             self._receiver.recv(1024)
@@ -89,7 +92,9 @@ class SelectorsEventsSelector(IOSelectorRegistry, IOSelector):
             This class owns selector object and takes care of finalization of it,
             thus the argument intended to be used in tests.
         """
-        self._selector: STDSelector[_SelectorKeyData] = selector or selectors.DefaultSelector()
+        self._selector: STDSelector[_SelectorKeyData] = selector or cast(
+            STDSelector[_SelectorKeyData], selectors.DefaultSelector()
+        )
         self._logger = (logger or get_logger()).bind(component="selectors-event-selector")
 
         self._wakeupper = _SelectorWakeupper(self._selector, logger=logger)
@@ -192,7 +197,6 @@ class SelectorNetworking(Networking):
         self._logger = (logger or get_logger()).bind(component="networking")
 
         self._managed_sockets_refs: defaultdict[int, int] = defaultdict(lambda: 0)
-        self._waiters: set[Promise[Any]] = set()
 
     async def wait_sock_event(
         self, sock: SocketLike, *events: Literal["read", "write"], label: str | None = None
@@ -210,9 +214,7 @@ class SelectorNetworking(Networking):
             return await self._wait_sock_events(fd, int_events, label)
 
     async def _wait_sock_events(self, sock: int, events: int, event_name: str) -> None:
-        from aio.future import _create_promise
-
-        waiter: Promise[Any] = _create_promise(f"socket-{event_name}-waiter", sock=sock)
+        from aio.future import create_promise
 
         def done_cb(_: int, __: int, exc: BaseException | None) -> None:
             if waiter.future.is_finished:
@@ -223,14 +225,13 @@ class SelectorNetworking(Networking):
             else:
                 waiter.set_exception(exc)
 
-        self._selector.add_watch(sock, events, done_cb)
-
-        self._waiters.add(waiter)
-        try:
-            await waiter.future
-        finally:
-            self._waiters.remove(waiter)
-            self._selector.stop_watch(sock, events, done_cb)
+        waiter: Promise[None]
+        async with create_promise(f"socket-{event_name}-waiter") as waiter:
+            self._selector.add_watch(sock, events, done_cb)
+            try:
+                await waiter.future
+            finally:
+                self._selector.stop_watch(sock, events, done_cb)
 
     async def sock_connect(self, sock: socket.socket, addr: SocketAddress) -> None:
         with self._manage_sock(sock) as fd:
@@ -259,7 +260,7 @@ class SelectorNetworking(Networking):
 
                 await self._wait_sock_events(fd, selectors.EVENT_READ, "accept")
 
-    async def sock_read(self, sock: SocketLike, amount: int) -> bytes:
+    async def sock_read(self, sock: socket.socket, amount: int) -> bytes:
         with self._manage_sock(sock) as fd:
             while True:
                 try:
@@ -269,7 +270,7 @@ class SelectorNetworking(Networking):
 
                 await self._wait_sock_events(fd, selectors.EVENT_READ, "read")
 
-    async def sock_write(self, sock: SocketLike, data: bytes) -> int:
+    async def sock_write(self, sock: socket.socket, data: bytes) -> int:
         with self._manage_sock(sock) as fd:
             while True:
                 try:
@@ -279,7 +280,7 @@ class SelectorNetworking(Networking):
 
                 await self._wait_sock_events(fd, selectors.EVENT_WRITE, "write")
 
-    async def sock_write_all(self, sock: SocketLike, data: bytes) -> None:
+    async def sock_write_all(self, sock: socket.socket, data: bytes) -> None:
         with self._manage_sock(sock) as fd:
             sent = 0
             while sent != len(data):
@@ -296,9 +297,6 @@ class SelectorNetworking(Networking):
                 await self._wait_sock_events(fd, selectors.EVENT_WRITE, "write-all")
 
     def close(self) -> None:
-        for waiter in self._waiters:
-            waiter.cancel()
-
         for sock_fileno, refs in self._managed_sockets_refs.items():
             if refs > 0 and sock_fileno:
                 self._selector.stop_watch(sock_fileno, None, None)
@@ -327,10 +325,12 @@ class SelectorNetworking(Networking):
                 if sock.getblocking():
                     raise SocketConfigurationError("Socket is blocking")
                 return sock.fileno()
-            case _:
+            case has_fileno if isinstance(has_fileno, HasFileno):
                 if sock.fileno() is None or sock.fileno() <= 0:
                     raise SocketConfigurationError("Socket has invalid file-id")
                 return sock.fileno()
+            case _:
+                assert_never(sock)
 
 
 def create_selectors_event_selector(

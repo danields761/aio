@@ -1,3 +1,6 @@
+import functools
+import inspect
+import socket
 import weakref
 from unittest.mock import patch
 
@@ -27,3 +30,17 @@ def guard_futures_cleanup():
             pytest.fail(
                 f"One of the test doesnt cleanup instantiated futures:\n{unfinished_futures}"
             )
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    if callable(pyfuncitem.obj) and inspect.iscoroutinefunction(pyfuncitem.obj):
+        orig = pyfuncitem.obj
+
+        @functools.wraps(orig)
+        def coro_wrapper(*args, **kwargs):
+            return aio.run(orig(*args, **kwargs))
+
+        pyfuncitem.obj = coro_wrapper
+
+    yield

@@ -289,7 +289,7 @@ class Networking(abc.ABC):
         """
         raise NotImplementedError
 
-    async def sock_read(self, sock: SocketLike, amount: int) -> bytes:
+    async def sock_read(self, sock: socket.socket, amount: int) -> bytes:
         """
 
         :param sock:
@@ -299,7 +299,7 @@ class Networking(abc.ABC):
         """
         raise NotImplementedError
 
-    async def sock_write(self, sock: SocketLike, data: bytes) -> int:
+    async def sock_write(self, sock: socket.socket, data: bytes) -> int:
         """
 
         :param sock:
@@ -309,7 +309,7 @@ class Networking(abc.ABC):
         """
         raise NotImplementedError
 
-    async def sock_write_all(self, sock: SocketLike, data: bytes) -> None:
+    async def sock_write_all(self, sock: socket.socket, data: bytes) -> None:
         """
 
         :param sock:

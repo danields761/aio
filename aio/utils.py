@@ -6,7 +6,7 @@ import signal
 import sys
 import types
 import warnings
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Coroutine, Type
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Coroutine, NoReturn, Type
 from weakref import WeakSet
 
 import loguru
@@ -128,3 +128,7 @@ def is_coro_running(coro: Coroutine[Any, Any, Any]) -> bool:
 
 def get_logger() -> Logger:
     return loguru.logger
+
+
+def assert_never(value: NoReturn) -> NoReturn:
+    assert False, f"Should never occurs: {value}"

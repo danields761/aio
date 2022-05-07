@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Protocol, TypeVar
+from typing import Any, Mapping, Protocol, TypeVar, runtime_checkable
 
 T = TypeVar("T")
 
 
+@runtime_checkable
 class HasFileno(Protocol):
     def fileno(self) -> int:
         raise NotImplementedError
